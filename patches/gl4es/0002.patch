@@ -1,0 +1,240 @@
+diff --git a/src/gl/fpe.c b/src/gl/fpe.c
+index f32b1ed4..e57a56bc 100644
+--- a/src/gl/fpe.c
++++ b/src/gl/fpe.c
+@@ -16,6 +16,9 @@
+ #define fpe_state_t fpe_state_t
+ #define fpe_fpe_t fpe_fpe_t
+ #define kh_fpecachelist_t kh_fpecachelist_t
++#include <signal.h>
++#include <time.h>
++
+ #include "fpe_cache.h"
+ #undef fpe_state_t
+ #undef fpe_fpe_t
+@@ -513,15 +516,30 @@ program_t* APIENTRY_GL4ES fpe_CustomShader(program_t* glprogram, fpe_state_t* st
+             kh_foreach(uniforms, k, m,
+                 if(!m->builtin) {
+                     n = findUniform(father_uniforms, m->name);
++                    /*printf("copying uniform %s", m->name);*/
+                     if(n) {
++                        /*printf(" -> ");
++                        if (is_uniform_float(n->type)) {
++                            for (int i = 0; i < n->cache_size / sizeof(float); i++) {
++                                printf("%f ", *(float*)(glprogram->cache.cache+n->cache_offs+i*sizeof(float)));
++                            }
++                        } else if (is_uniform_int(n->type)){
++                            for (int i = 0; i < n->cache_size / sizeof(int); i++) {
++                                printf("%d ", *(int*)(glprogram->cache.cache+n->cache_offs+i*sizeof(int)));
++                            }
++                        } else {
++                            printf("matrix type");
++                        }*/
+                         m->parent_offs = n->cache_offs;
+                         m->parent_size = n->cache_size;
+                     }
++                    /*printf("\n");*/
+                 }
+             )
+         }
+         // all done
+         DBG(printf("creating FPE Custom Program : %d(%p)\n", fpe->prog, fpe->glprogram);)
++        //printf("creating FPE Custom Program : %d(%p)\n", fpe->prog, fpe->glprogram);
+     }
+ 
+     return fpe->glprogram;
+@@ -821,6 +839,7 @@ void APIENTRY_GL4ES fpe_glDrawElements(GLenum mode, GLsizei count, GLenum type,
+     scratch_t scratch = {0};
+     realize_glenv(mode==GL_POINTS, 0, count, type, indices, &scratch);
+     LOAD_GLES(glDrawElements);
++    LOAD_GLES(glBindBuffer);
+     int use_vbo = 0;
+     if(glstate->vao->elements && glstate->vao->elements->real_buffer && indices>=glstate->vao->elements->data && indices<=((void*)((char*)glstate->vao->elements->data+glstate->vao->elements->size))) {
+         use_vbo = 1;
+@@ -829,7 +848,46 @@ void APIENTRY_GL4ES fpe_glDrawElements(GLenum mode, GLsizei count, GLenum type,
+         DBG(printf("Using VBO %d for indices\n", glstate->vao->elements->real_buffer);)
+     }
+     realize_bufferIndex();
++
++    bool skipDraw = false;
++    LOAD_GLES(glGetIntegerv);
++    GLint ebo_id = 0;
++    gles_glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &ebo_id);
++
++    size_t index_size = (type == GL_UNSIGNED_SHORT) ? 2 :
++                        (type == GL_UNSIGNED_INT)   ? 4 :
++                        (type == GL_UNSIGNED_BYTE)  ? 1 : 0;
++
++    if (index_size == 0) {
++        skipDraw = true;
++    }
++
++    if (ebo_id != 0) {
++        // using VBO — indices is treated as byte offset
++        GLint buf_size = 0;
++        glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &buf_size);
++
++        uintptr_t offset = (uintptr_t)indices;
++        size_t required_size = offset + count * index_size;
++
++        if (required_size > (size_t)buf_size) {
++            skipDraw = true;
++        }
++
++    } else {
++        skipDraw = true;
++    }
++
++    if (skipDraw) {
++        gles_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
++    }
++
+     gles_glDrawElements(mode, count, type, indices);
++
++    if (skipDraw) {
++        gles_glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo_id);
++    }
++
+     if(use_vbo)
+         wantBufferIndex(0);
+     free_scratch(&scratch);
+@@ -1044,6 +1102,43 @@ int fpe_gettexture(int TMU) {
+     return target;
+ }
+ 
++#define MAX_PROGRAMS 8192
++typedef struct {
++    GLuint program;
++    uint64_t last_dump_time_ms;
++} ShaderDumpInfo;
++
++ShaderDumpInfo shader_dump_cache[MAX_PROGRAMS];
++int shader_dump_count = 0;
++
++uint64_t time_ms() {
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return (uint64_t)(ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL);
++}
++
++int should_dump(GLuint program) {
++    uint64_t now = time_ms();
++    for (int i = 0; i < shader_dump_count; ++i) {
++        if (shader_dump_cache[i].program == program) {
++            if (now - shader_dump_cache[i].last_dump_time_ms >= 100) {
++                shader_dump_cache[i].last_dump_time_ms = now;
++                return 1;
++            }
++            return 0;
++        }
++    }
++
++    if (shader_dump_count < MAX_PROGRAMS) {
++        shader_dump_cache[shader_dump_count].program = program;
++        shader_dump_cache[shader_dump_count].last_dump_time_ms = now;
++        ++shader_dump_count;
++        return 1;
++    }
++
++    return 0;
++}
++
+ void realize_glenv(int ispoint, int first, int count, GLenum type, const void* indices, scratch_t* scratch) {
+     // the handling of GL_BGRA size of GL_DOUBLE using 1 scratch in not ideal, and a waste when dealing with Buffers
+     // TODO: have the scratch buffer part of the VBO, and tag it dirty when buffer is changed (or always dirty for VBO 0)
+@@ -1116,8 +1211,81 @@ void realize_glenv(int ispoint, int first, int count, GLenum type, const void* i
+             DBG(printf("Use GLSL program %d\n", glstate->gleshard->program);)
+         }
+         // synchronize uniforms with parent!
+-        if(glprogram != glstate->glsl->glprogram)
++        if(glprogram != glstate->glsl->glprogram) {
+             fpe_SyncUniforms(&glstate->glsl->glprogram->cache, glprogram);
++
++            /*
++            if (ShouldDump(glprogram->id)) {
++                LOAD_GLES2(glGetProgramiv)
++                LOAD_GLES2(glGetActiveUniform)
++                LOAD_GLES2(glGetUniformLocation)
++                LOAD_GLES2(glGetUniformfv)
++                LOAD_GLES2(glGetUniformiv)
++
++                GLint numUniforms = 0;
++                gles_glGetProgramiv(glprogram->id, GL_ACTIVE_UNIFORMS, &numUniforms);
++
++                for (GLint i = 0; i < numUniforms; ++i) {
++                    char name[256];
++                    GLsizei length;
++                    GLint size;
++                    GLenum t;
++                    gles_glGetActiveUniform(glprogram->id, i, sizeof(name), &length, &size, &t, name);
++
++                    GLint location = gles_glGetUniformLocation(glprogram->id, name);
++                    printf("Uniform #%d: %s (location: %d, type: 0x%x, prog: %d) -> ", i, name, location, t, glprogram->id);
++
++                    GLfloat fvalue[16];  // up to mat4
++                    GLint ivalue[4];     // up to ivec4
++
++                    switch (t) {
++                        case GL_FLOAT:
++                            gles_glGetUniformfv(program, location, fvalue);
++                            printf("%f", fvalue[0]);
++                            break;
++                        case GL_FLOAT_VEC2:
++                            gles_glGetUniformfv(program, location, fvalue);
++                            printf("(%f, %f)", fvalue[0], fvalue[1]);
++                            break;
++                        case GL_FLOAT_VEC3:
++                            gles_glGetUniformfv(program, location, fvalue);
++                            printf("(%f, %f, %f)", fvalue[0], fvalue[1], fvalue[2]);
++                            break;
++                        case GL_FLOAT_VEC4:
++                            gles_glGetUniformfv(program, location, fvalue);
++                            printf("(%f, %f, %f, %f)", fvalue[0], fvalue[1], fvalue[2], fvalue[3]);
++                            break;
++                        case GL_INT:
++                        case GL_BOOL:
++                            gles_glGetUniformiv(program, location, ivalue);
++                            printf("%d", ivalue[0]);
++                            break;
++                        case GL_INT_VEC2:
++                        case GL_BOOL_VEC2:
++                            gles_glGetUniformiv(program, location, ivalue);
++                            printf("(%d, %d)", ivalue[0], ivalue[1]);
++                            break;
++                        case GL_INT_VEC3:
++                        case GL_BOOL_VEC3:
++                            gles_glGetUniformiv(program, location, ivalue);
++                            printf("(%d, %d, %d)", ivalue[0], ivalue[1], ivalue[2]);
++                            break;
++                        case GL_INT_VEC4:
++                        case GL_BOOL_VEC4:
++                            gles_glGetUniformiv(program, location, ivalue);
++                            printf("(%d, %d, %d, %d)", ivalue[0], ivalue[1], ivalue[2], ivalue[3]);
++                            break;
++                        case GL_FLOAT_MAT2:
++                        case GL_FLOAT_MAT3:
++                        case GL_FLOAT_MAT4:
++                        default:
++                            printf("Unsupported type or matrix (0x%x)", type);
++                            break;
++                    }
++                    printf("\n");
++                }
++            }*/
++        }
+     } else {
+         fpe_program(ispoint);
+         if(glstate->gleshard->program != glstate->fpe->prog)
+diff --git a/src/gl/texenv.c b/src/gl/texenv.c
+index 576ebcf7..4bf53a29 100644
+--- a/src/gl/texenv.c
++++ b/src/gl/texenv.c
+@@ -595,6 +595,8 @@ void APIENTRY_GL4ES gl4es_glTexEnvf(GLenum target, GLenum pname, GLfloat param)
+ 
+ void APIENTRY_GL4ES gl4es_glTexEnvi(GLenum target, GLenum pname, GLint param) {
+     DBG(printf("glTexEnvi(...)->");)
++    // printf("glTexEnvi(...)->"); // liamelui dbg
++    return;
+     gl4es_glTexEnvf(target, pname, param);
+ }
+ 
