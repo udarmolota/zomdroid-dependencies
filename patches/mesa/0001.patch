@@ -705,7 +705,7 @@ index 00000000000..9b22cb73db3
 +        libmesa, libgallium, zfa_link_with
 +    ],
 +    dependencies : [
-+            driver_zink
++            driver_zink, driver_swrast
 +    ],
 +)
 \ No newline at end of file
