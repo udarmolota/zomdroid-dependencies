@@ -58,22 +58,13 @@ git apply "$PATCH_DIR"/*.patch || {
     exit 1
 }
 
-# RimDroid: add zfaReleaseCurrent so the GL/st context can be released from the
-# calling thread. Unity's render worker + main thread hand the GL context back and
-# forth (MakeCurrent(NULL) then MakeCurrent(ctx) on another thread); without a real
-# release the single ZFA/Zink context stays "current" on two threads at once ->
-# concurrent pipe_context use -> device-lost -> infinite teardown. box64 calls this
-# on SDL_GL_MakeCurrent(NULL) to serialize ownership.
-echo "==> RimDroid: injecting zfaReleaseCurrent into zfa frontend"
-cat >> src/gallium/frontends/zfa/zfa.c <<'ZFA_EOF'
-
-GLAPI GLboolean GLAPIENTRY zfaReleaseCurrent(void);
-GLAPI GLboolean GLAPIENTRY
-zfaReleaseCurrent(void)
-{
-   return st_api_make_current(NULL, NULL, NULL);
-}
-ZFA_EOF
+# NOTE: the zfaReleaseCurrent injection (multithreaded-context experiment) was REMOVED.
+# It was Plan A for the "infinite SDL_GL_DeleteContext loop" under the (disproven)
+# threading theory; the real fix is box64's SDL dynapi SwapWindow remap. The shipped,
+# working libzfa.so does NOT export zfaReleaseCurrent (box64 just no-ops the release),
+# so we keep this build behaviourally identical and only add the softpipe gallium driver.
+# If we later want threaded rendering (drop -force-gfx-direct) for performance, re-add it
+# and test that combination explicitly.
 
 echo "==> Setting up cross-file"
 sed -i "s|{ANDROID_NDK_HOME}|$ANDROID_NDK_HOME|g" "$CROSS_FILE"
