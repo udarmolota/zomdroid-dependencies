@@ -102,7 +102,7 @@ meson setup . "$REPO_DIR" \
   -Dfreedreno-kmds=kgsl \
   -Dosmesa=true \
   -Dzfa=true \
-  -Dgallium-drivers=zink \
+  -Dgallium-drivers=zink,softpipe \
   -Dshared-glapi=disabled \
   -Dbuildtype="$MESON_BUILD_TYPE"
 
