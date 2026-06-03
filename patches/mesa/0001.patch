@@ -675,7 +675,7 @@ index 3c371616e7e..bec89dea1af 100644
    ],
    dependencies : [
 -    dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
-+    dep_ws2_32, dep_thread, dep_clock, dep_unwind, idep_mesautil, driver_zink
++    dep_ws2_32, dep_thread, dep_clock, dep_unwind, idep_mesautil, driver_swrast, driver_zink
    ],
    name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
    soversion : host_machine.system() == 'windows' ? '' : '8',
