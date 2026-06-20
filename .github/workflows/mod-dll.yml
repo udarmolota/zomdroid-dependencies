@@ -1,0 +1,24 @@
+# Builds ONLY the RimWorld mod assembly (RimDroidCJK.dll). No Unity, no license needed —
+# just dotnet + Krafs.Rimworld.Ref. Run from Actions and download the RimDroidCJK-dll artifact.
+# (The font bundle is built separately in the local Unity editor; see RimDroidCJK-bundle/README.md.)
+
+name: Build Mod DLL
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  mod-dll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: dotnet build
+        run: dotnet build RimDroidCJK/Source/RimDroidCJK.csproj -c Release -o _out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RimDroidCJK-dll
+          path: _out/RimDroidCJK.dll
+          if-no-files-found: error
