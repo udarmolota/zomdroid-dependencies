@@ -1,8 +1,10 @@
-# One-time helper to obtain a Unity activation request file (.alf).
-# Run this once (Actions tab -> "Get Unity Activation File" -> Run workflow), download the
-# "Manual_Activation_File" artifact, then follow the steps in the project README to turn the
-# .alf into a .ulf and store it as the UNITY_LICENSE repo secret. After that you never need
-# this workflow again.
+# One-time helper to obtain a Unity activation request file (.alf), without the deprecated
+# game-ci/unity-request-activation-file action. Runs the Unity editor in the GameCI Docker
+# image and calls -createManualActivationFile directly.
+#
+# Usage: Actions -> "Get Unity Activation File" -> Run workflow. Download the
+# "Manual_Activation_File" artifact (a Unity_vXXXX.alf), then per the README turn it into a
+# .ulf at https://license.unity3d.com/manual and store that as the UNITY_LICENSE repo secret.
 
 name: Get Unity Activation File
 
@@ -12,12 +14,18 @@ on:
 jobs:
   activation:
     runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-2019.4.30f1-base-3
     steps:
-      - name: Request manual activation file
-        id: getManualLicenseFile
-        uses: game-ci/unity-request-activation-file@v2
+      - name: Create manual activation file
+        run: |
+          # createManualActivationFile exits non-zero by design (editor is unlicensed) -> ignore.
+          /opt/unity/Editor/Unity -batchmode -nographics -logFile /dev/stdout -quit -createManualActivationFile || true
+          echo "---- generated .alf ----"
+          ls -la *.alf
       - name: Upload activation file
         uses: actions/upload-artifact@v4
         with:
           name: Manual_Activation_File
-          path: ${{ steps.getManualLicenseFile.outputs.filePath }}
+          path: "*.alf"
+          if-no-files-found: error
