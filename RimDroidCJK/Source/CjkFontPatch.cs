@@ -74,30 +74,36 @@ namespace RimDroidCJK
             return font;
         }
 
-        // Verse.Text holds (private static): Font[] fonts; GUIStyle[] fontStyles, textFieldStyles,
-        // textAreaStyles, textAreaReadOnlyStyles — all indexed by GameFont {Tiny,Small,Medium}.
-        // Swapping the Font (keeping each GUIStyle's fontSize) makes the whole legacy IMGUI UI render
-        // through our font, which carries Latin+Cyrillic+CJK, so existing text is unchanged and CJK
-        // now resolves. The dynamic-font atlas is built at runtime by FreeType (works under box64) and
-        // never touches the streamed TMP SDF atlases, so no UI-texture corruption.
+        // Verse.Text indexes its fonts by GameFont {Tiny,Small,Medium}. Rendering goes through
+        // CurFontStyle -> fontStyles[fontInt], so the GUIStyle's .font is what actually draws. Those
+        // style arrays (fontStyles/textFieldStyles/textAreaStyles/textAreaReadOnlyStyles) are PUBLIC
+        // static, while the backing Font[] fonts is PRIVATE. We set the GUIStyles' .font directly
+        // (compile-checked via the public API) and also overwrite fonts[] via reflection for good
+        // measure. Each GUIStyle keeps its own fontSize, so text stays the right size but now resolves
+        // through our font (Latin+Cyrillic+CJK). The dynamic-font atlas is built at runtime by FreeType
+        // (works under box64) and never touches the streamed TMP SDF atlases, so no texture corruption.
         private static void ReplaceVerseTextFonts(Font cjk)
         {
-            const BindingFlags BF = BindingFlags.NonPublic | BindingFlags.Static;
-            Type t = typeof(Verse.Text);
+            int styled = 0;
+            foreach (GUIStyle[] arr in new[] { Text.fontStyles, Text.textFieldStyles,
+                                               Text.textAreaStyles, Text.textAreaReadOnlyStyles })
+            {
+                if (arr == null) continue;
+                foreach (GUIStyle s in arr)
+                    if (s != null) { s.font = cjk; styled++; }
+            }
 
-            var fonts = t.GetField("fonts", BF)?.GetValue(null) as Font[];
+            // private static Font[] fonts — reflection (NonPublic is correct here).
+            var fonts = typeof(Text).GetField("fonts", BindingFlags.NonPublic | BindingFlags.Static)
+                                    ?.GetValue(null) as Font[];
             if (fonts != null)
                 for (int i = 0; i < fonts.Length; i++)
                     fonts[i] = cjk;
 
-            string[] styleArrays = { "fontStyles", "textFieldStyles", "textAreaStyles", "textAreaReadOnlyStyles" };
-            foreach (string name in styleArrays)
-            {
-                var arr = t.GetField(name, BF)?.GetValue(null) as GUIStyle[];
-                if (arr == null) continue;
-                foreach (GUIStyle s in arr)
-                    if (s != null) s.font = cjk;
-            }
+            string verify = (Text.fontStyles != null && Text.fontStyles.Length > 1 && Text.fontStyles[1] != null
+                             && Text.fontStyles[1].font != null) ? Text.fontStyles[1].font.name : "<null>";
+            Log.Message("[RimDroidCJK] styles set: " + styled + ", fonts[] len: " + (fonts != null ? fonts.Length : 0)
+                        + ", verify fontStyles[1].font = " + verify);
         }
     }
 }
