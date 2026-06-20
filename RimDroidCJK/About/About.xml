@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <packageId>rimdroid.cjkfont</packageId>
+  <name>RimDroid CJK Font</name>
+  <author>RimDroid</author>
+  <supportedVersions>
+    <li>1.5</li>
+  </supportedVersions>
+  <description>Adds CJK (Chinese/Japanese/Korean) glyphs by swapping RimWorld's UI font with an embedded Noto Sans CJK font at runtime, keeping resources.assets untouched.
+
+Built for RimDroid (Android / box64 + Zink), where Unity's OS-font discovery never runs, so the desktop "install a system CJK font" fix does not work, and where editing resources.assets corrupts the streamed TMP SDF atlases. This mod sidesteps both: the font is shipped as a self-contained AssetBundle (embedded TTF, rasterized by Unity's built-in FreeType) and injected into Verse.Text's GUIStyles at startup.</description>
+</ModMetaData>

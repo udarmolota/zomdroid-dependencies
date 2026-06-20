@@ -1,0 +1,83 @@
+# GitHub Actions — builds the complete "RimDroid CJK Font" RimWorld mod in the cloud,
+# with NO local Unity and NO local .NET (same idea as the Zink CI build).
+#
+# Produces a ready-to-install mod zip:  RimDroidCJK/  (About/ + Assemblies/RimDroidCJK.dll + Resources/rimdroidcjk.bundle)
+# Drop that folder into the instance's  .../game/Mods/  and enable it (keep resources.assets ORIGINAL).
+#
+# Repo layout expected (push these two folders + this file to a repo):
+#   RimDroidCJK/                 -> mod source (About/, Source/RimDroidCJK.csproj, Source/CjkFontPatch.cs)
+#   RimDroidCJK-bundle/unity/    -> Unity project that bakes the font AssetBundle
+#   .github/workflows/cjk-bundle.yml  -> this file
+#
+# ONE-TIME: free Unity Personal license as secret UNITY_LICENSE (full .ulf contents).
+#   See https://game.ci/docs/github/activation  (request .alf -> license.unity3d.com -> .ulf -> secret).
+
+name: Build RimDroid CJK Mod
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  bundle:
+    name: Bake font AssetBundle (Unity, StandaloneLinux64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: RimDroidCJK-bundle/unity/Library
+          key: Library-cjk-bundle
+      - name: Build AssetBundle
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          unityVersion: 2019.4.30f1
+          targetPlatform: StandaloneLinux64
+          projectPath: RimDroidCJK-bundle/unity
+          buildMethod: BuildBundle.Build
+          allowDirtyBuild: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: RimDroidCJK-bundle/unity/bundle-out/rimdroidcjk.bundle
+          if-no-files-found: error
+
+  mod-dll:
+    name: Compile mod assembly (.NET, no Unity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: dotnet build
+        run: dotnet build RimDroidCJK/Source/RimDroidCJK.csproj -c Release -o RimDroidCJK/Source/bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod-dll
+          path: RimDroidCJK/Source/bin/RimDroidCJK.dll
+          if-no-files-found: error
+
+  package:
+    name: Assemble installable mod
+    needs: [bundle, mod-dll]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: _bundle }
+      - uses: actions/download-artifact@v4
+        with: { name: mod-dll, path: _dll }
+      - name: Assemble mod folder
+        run: |
+          mkdir -p out/RimDroidCJK/About out/RimDroidCJK/Assemblies out/RimDroidCJK/Resources
+          cp RimDroidCJK/About/About.xml          out/RimDroidCJK/About/
+          cp _dll/RimDroidCJK.dll                 out/RimDroidCJK/Assemblies/
+          cp _bundle/rimdroidcjk.bundle           out/RimDroidCJK/Resources/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RimDroidCJK-mod
+          path: out/RimDroidCJK
+          if-no-files-found: error

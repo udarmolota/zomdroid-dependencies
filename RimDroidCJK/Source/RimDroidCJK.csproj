@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds the mod assembly with ZERO local Unity and ZERO proprietary game DLLs.
+    Krafs.Rimworld.Ref is a public NuGet package of reference-only RimWorld + UnityEngine
+    assemblies (legal for modding), so `dotnet build -c Release` works locally or in CI.
+    Output: bin/Release/RimDroidCJK.dll -> copy into the mod's Assemblies/ folder.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>RimDroidCJK</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference-only RimWorld 1.5.4104 + UnityEngine modules (Verse, GUIStyle, Font, AssetBundle). -->
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.5.4104" />
+    <!-- Lets `dotnet build` target net472 on Linux/CI without a Windows .NET Framework install. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>
