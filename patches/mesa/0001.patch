@@ -158,10 +158,17 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..508d07e 100644
+index 0916f44..62eae64 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -228,6 +228,82 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -1,5 +1,6 @@
+ #include "zink_batch.h"
+ #include "zink_context.h"
++#include <pthread.h>   /* RimDroid: owner-thread guard in zink_reap_completed_batch_states */
+ #include "zink_descriptors.h"
+ #include "zink_kopper.h"
+ #include "zink_program.h"
+@@ -228,6 +229,114 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -178,6 +185,37 @@ index 0916f44..508d07e 100644
 +   struct zink_screen *screen = zink_screen(ctx->base.screen);
 +   unsigned reaped = 0;
 +   uint64_t freed_before = rd_free_total;
++   /* OWNER-THREAD ONLY: zink_fence_finish flushes a fence's deferred_ctx from whatever thread
++      waits on it, so zink_flush (and thus this reaper) can run on a foreign thread concurrently
++      with the owner. Upstream's head-pop tolerates that race; walking and unlinking mid-list
++      does not (corrupted list -> waiter waits on an unlinked node -> permanent freeze, seen at
++      ~35s into loading). Register the first flushing thread as the owner and skip all others. */
++   {
++      static struct { struct zink_context *ctx; pthread_t tid; } rd_owner[8];
++      static simple_mtx_t rd_owner_mtx = SIMPLE_MTX_INITIALIZER;
++      pthread_t self = pthread_self();
++      bool owner = false;
++      simple_mtx_lock(&rd_owner_mtx);
++      for (unsigned i = 0; i < ARRAY_SIZE(rd_owner); i++) {
++         if (rd_owner[i].ctx == ctx) {
++            owner = pthread_equal(rd_owner[i].tid, self);
++            break;
++         }
++         if (!rd_owner[i].ctx) {
++            rd_owner[i].ctx = ctx;
++            rd_owner[i].tid = self;
++            owner = true;
++            break;
++         }
++      }
++      simple_mtx_unlock(&rd_owner_mtx);
++      if (!owner) {
++         static unsigned rd_foreign;
++         if (++rd_foreign % 1024 == 1)
++            mesa_logw("RDZFA reap: skipped foreign-thread flush #%u ctx=%p", rd_foreign, (void*)ctx);
++         return;
++      }
++   }
 +   /* SCAN-PAST-HEAD (brief v15): upstream recycles strictly from the list head, so one stuck
 +      state poisons the whole list (measured: 1.45M live states, 0 reused). Walk the list and
 +      unlink ANY submitted+completed state; never touch unsubmitted/incomplete ones and never
@@ -235,8 +273,9 @@ index 0916f44..508d07e 100644
 +      static unsigned rd_last_cnt = 0;
 +      if (reaped || ctx->batch_states_count != rd_last_cnt) {
 +         rd_last_cnt = ctx->batch_states_count;
-+         mesa_logw("RDZFA reap: %u reaped, live_states=%u, freed %uMB",
-+                   reaped, ctx->batch_states_count, (unsigned)((rd_free_total - freed_before) >> 20));
++         mesa_logw("RDZFA reap: %u reaped, live_states=%u, freed %uMB ctx=%p",
++                   reaped, ctx->batch_states_count, (unsigned)((rd_free_total - freed_before) >> 20),
++                   (void*)ctx);
 +      }
 +   }
 +}
