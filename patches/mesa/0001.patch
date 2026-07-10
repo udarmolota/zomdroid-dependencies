@@ -157,6 +157,25 @@ index ddb67b3..98805d2 100644
  
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
+diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
+index e3ba593..e0b4fd2 100644
+--- a/src/gallium/drivers/zink/zink_bo.c
++++ b/src/gallium/drivers/zink/zink_bo.c
+@@ -1391,9 +1391,13 @@ zink_bo_init(struct zink_screen *screen)
+    for (uint32_t i = 0; i < screen->info.mem_props.memoryHeapCount; ++i)
+       total_mem += screen->info.mem_props.memoryHeaps[i].size;
+    /* Create managers. */
++   /* RimDroid (Android): total_mem/8 lets the dead-BO cache balloon to gigabytes during
++      RimWorld's atlas-bake upload storm (measured: 5.1GB of kgsl BOs for ~1.4GB of live
++      textures -> the process gets LMK-killed). Cap the reuse cache hard. */
++   uint64_t rd_cache_cap = MIN2(total_mem / 8, 256ull * 1024 * 1024);
+    pb_cache_init(&screen->pb.bo_cache, screen->info.mem_props.memoryTypeCount,
+                  500000, 2.0f, 0,
+-                 total_mem / 8, offsetof(struct zink_bo, cache_entry), screen,
++                 rd_cache_cap, offsetof(struct zink_bo, cache_entry), screen,
+                  (void*)bo_destroy, (void*)bo_can_reclaim);
+ 
+    unsigned min_slab_order = MIN_SLAB_ORDER;  /* 256 bytes */
 diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
 index 1ab36be..8b2d8c0 100644
 --- a/src/gallium/drivers/zink/zink_instance.py
