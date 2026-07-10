@@ -39,7 +39,7 @@ REPO_DIR="$REPOS_DIR/$REPO_NAME"
 PATCH_DIR="$PATCHES_DIR/$REPO_NAME"
 BUILD_DIR="$REPO_DIR/build-android-$ANDROID_ABI"
 CROSS_FILE="$REPO_DIR/cross-android-$ANDROID_ABI"
-MESA_TAG="mesa-25.0.2"
+MESA_TAG="mesa-25.2.4"
 
 mkdir -p "$REPOS_DIR"
 cd "$REPOS_DIR"
@@ -91,7 +91,6 @@ meson setup . "$REPO_DIR" \
   -Dopengl=true \
   -Dvulkan-drivers=freedreno \
   -Dfreedreno-kmds=kgsl \
-  -Dosmesa=true \
   -Dzfa=true \
   -Dgallium-drivers=zink,softpipe \
   -Dshared-glapi=disabled \
@@ -107,9 +106,6 @@ if [ "$BUILD_TYPE_CMAKE" = "Release" ]; then
   echo "==> Stripping libvulkan_freedreno.so..."
   "$STRIP_BIN" --strip-unneeded "src/freedreno/vulkan/libvulkan_freedreno.so"
 
-  echo "==> Stripping libOSMesa.so..."
-  "$STRIP_BIN" --strip-unneeded "src/gallium/targets/osmesa/libOSMesa.so"
-
   echo "==> Stripping libzfa.so..."
   "$STRIP_BIN" --strip-unneeded "src/gallium/targets/zfa/libzfa.so"
 fi
@@ -119,5 +115,4 @@ mkdir -p "$TARGETS_DIR"
 echo "==> Copying mesa targets..."
 
 cp -v "src/freedreno/vulkan/libvulkan_freedreno.so" "$TARGETS_DIR/"
-cp -v "src/gallium/targets/osmesa/libOSMesa.so" "$TARGETS_DIR/"
 cp -v "src/gallium/targets/zfa/libzfa.so" "$TARGETS_DIR/"

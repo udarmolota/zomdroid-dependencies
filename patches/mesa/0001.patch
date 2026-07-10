@@ -1,6 +1,6 @@
 diff --git a/cross-android-arm64-v8a b/cross-android-arm64-v8a
 new file mode 100644
-index 00000000000..34bcd93db78
+index 0000000..34bcd93
 --- /dev/null
 +++ b/cross-android-arm64-v8a
 @@ -0,0 +1,14 @@
@@ -20,10 +20,10 @@ index 00000000000..34bcd93db78
 +endian = 'little'
 diff --git a/include/GL/zfa.h b/include/GL/zfa.h
 new file mode 100644
-index 00000000000..d5865bedc34
+index 0000000..1af6726
 --- /dev/null
 +++ b/include/GL/zfa.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,34 @@
 +#ifndef ZFA_H
 +#define ZFA_H
 +
@@ -50,16 +50,19 @@ index 00000000000..d5865bedc34
 +GLAPI void GLAPIENTRY
 +zfaFlushFront(void);
 +
++GLAPI GLboolean GLAPIENTRY
++zfaReleaseCurrent(void);
++
 +#ifdef __cplusplus
 +  }
 +#endif
 +
 +#endif //ZFA_H
 diff --git a/meson.build b/meson.build
-index 095aec5d9ea..be41db38d4c 100644
+index 54da416..803bbaf 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -90,6 +90,8 @@ if with_tools.contains('all')
+@@ -116,6 +116,8 @@ if with_tools.contains('all')
    ]
  endif
  
@@ -68,25 +71,12 @@ index 095aec5d9ea..be41db38d4c 100644
  with_any_vulkan_layers = get_option('vulkan-layers').length() != 0
  with_intel_tools = with_tools.contains('intel') or with_tools.contains('intel-ui')
  with_imgui = with_intel_tools or with_vulkan_overlay_layer
-@@ -2038,9 +2040,9 @@ if dep_unwind.found()
- endif
- 
- if with_osmesa
--  if not with_gallium_swrast
--    error('OSMesa gallium requires gallium softpipe or llvmpipe.')
--  endif
-+#  if not with_gallium_swrast
-+#    error('OSMesa gallium requires gallium softpipe or llvmpipe.')
-+#  endif
-   if host_machine.system() == 'windows'
-     osmesa_lib_name = 'osmesa'
-   else
-diff --git a/meson_options.txt b/meson_options.txt
-index 0147cafcb14..b2901fe8ba1 100644
---- a/meson_options.txt
-+++ b/meson_options.txt
-@@ -517,6 +517,13 @@ option(
-   description : 'Build OSmesa.'
+diff --git a/meson.options b/meson.options
+index 2392792..b796e0f 100644
+--- a/meson.options
++++ b/meson.options
+@@ -533,6 +533,13 @@ option(
+   description : 'Does nothing, left here for a while to avoid build breakages.',
  )
  
 +option(
@@ -100,7 +90,7 @@ index 0147cafcb14..b2901fe8ba1 100644
    'tools',
    type : 'array',
 diff --git a/src/gallium/auxiliary/target-helpers/inline_sw_helper.h b/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
-index ddb67b3a25a..98805d28d67 100644
+index ddb67b3..98805d2 100644
 --- a/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
 +++ b/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
 @@ -7,6 +7,9 @@
@@ -114,7 +104,7 @@ index ddb67b3a25a..98805d28d67 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
-index 00cdc8eeb67..16570ebe7cc 100644
+index 1ab36be..8b2d8c0 100644
 --- a/src/gallium/drivers/zink/zink_instance.py
 +++ b/src/gallium/drivers/zink/zink_instance.py
 @@ -47,6 +47,7 @@ EXTENSIONS = [
@@ -126,7 +116,7 @@ index 00cdc8eeb67..16570ebe7cc 100644
  
  if platform.system() == "Darwin":
 diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
-index ef04ea1628c..ea0ae6cf744 100644
+index ea88f06..8ccae4c 100644
 --- a/src/gallium/drivers/zink/zink_kopper.c
 +++ b/src/gallium/drivers/zink/zink_kopper.c
 @@ -69,6 +69,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
@@ -155,7 +145,7 @@ index ef04ea1628c..ea0ae6cf744 100644
  #endif
     default:
        unreachable("unsupported!");
-@@ -218,6 +230,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
+@@ -224,6 +236,13 @@ find_dt_entry(struct zink_screen *screen, const struct kopper_displaytarget *cdt
        he = _mesa_hash_table_search(&screen->dts, win32->hwnd);
        break;
     }
@@ -169,7 +159,7 @@ index ef04ea1628c..ea0ae6cf744 100644
  #endif
     default:
        unreachable("unsupported!");
-@@ -321,6 +340,10 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
+@@ -327,6 +346,10 @@ kopper_CreateSwapchain(struct zink_screen *screen, struct kopper_displaytarget *
        cswap->scci.imageExtent.width = w;
        cswap->scci.imageExtent.height = h;
        break;
@@ -180,7 +170,7 @@ index ef04ea1628c..ea0ae6cf744 100644
     default:
        unreachable("unknown display platform");
     }
-@@ -423,6 +446,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+@@ -431,6 +454,7 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
              break;
           case KOPPER_WAYLAND:
           case KOPPER_WIN32:
@@ -188,7 +178,7 @@ index ef04ea1628c..ea0ae6cf744 100644
              _mesa_hash_table_init(&screen->dts, screen, _mesa_hash_pointer, _mesa_key_pointer_equal);
              break;
           default:
-@@ -494,6 +518,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
+@@ -502,6 +526,13 @@ zink_kopper_displaytarget_create(struct zink_screen *screen, unsigned tex_usage,
        _mesa_hash_table_insert(&screen->dts, win32->hwnd, cdt);
        break;
     }
@@ -203,10 +193,10 @@ index ef04ea1628c..ea0ae6cf744 100644
     default:
        unreachable("unsupported!");
 diff --git a/src/gallium/drivers/zink/zink_kopper.h b/src/gallium/drivers/zink/zink_kopper.h
-index e1d18ae7ef7..f29e2a3527d 100644
+index fba05a0..5c20065 100644
 --- a/src/gallium/drivers/zink/zink_kopper.h
 +++ b/src/gallium/drivers/zink/zink_kopper.h
-@@ -71,7 +71,8 @@ struct kopper_swapchain {
+@@ -74,7 +74,8 @@ struct kopper_swapchain {
  enum kopper_type {
     KOPPER_X11,
     KOPPER_WAYLAND,
@@ -217,10 +207,10 @@ index e1d18ae7ef7..f29e2a3527d 100644
  
  struct kopper_displaytarget
 diff --git a/src/gallium/drivers/zink/zink_screen.c b/src/gallium/drivers/zink/zink_screen.c
-index bc0cc58d2b9..1f5487c8493 100644
+index 7ec86d0..4cdeaae 100644
 --- a/src/gallium/drivers/zink/zink_screen.c
 +++ b/src/gallium/drivers/zink/zink_screen.c
-@@ -306,9 +306,11 @@ disk_cache_init(struct zink_screen *screen)
+@@ -305,9 +305,11 @@ disk_cache_init(struct zink_screen *screen)
     /* Hash in the zink driver build. */
     const struct build_id_note *note =
         build_id_find_nhdr_for_addr(disk_cache_init);
@@ -235,7 +225,7 @@ index bc0cc58d2b9..1f5487c8493 100644
  #endif
  
     /* Hash in the Vulkan pipeline cache UUID to identify the combination of
-@@ -1968,21 +1970,25 @@ check_have_device_time(struct zink_screen *screen)
+@@ -1935,21 +1937,25 @@ check_have_device_time(struct zink_screen *screen)
  static void
  zink_error(const char *msg)
  {
@@ -261,7 +251,7 @@ index bc0cc58d2b9..1f5487c8493 100644
  }
  
  static VKAPI_ATTR VkBool32 VKAPI_CALL
-@@ -3324,14 +3330,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
+@@ -3297,14 +3303,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
        goto fail;
     }
  
@@ -279,7 +269,7 @@ index bc0cc58d2b9..1f5487c8493 100644
     simple_mtx_lock(&instance_lock);
     if (++instance_refcount == 1) {
 diff --git a/src/gallium/frontends/dri/meson.build b/src/gallium/frontends/dri/meson.build
-index a98c8c0a903..b36137cb7bd 100644
+index a98c8c0..b36137c 100644
 --- a/src/gallium/frontends/dri/meson.build
 +++ b/src/gallium/frontends/dri/meson.build
 @@ -37,7 +37,7 @@ if with_dri2
@@ -293,7 +283,7 @@ index a98c8c0a903..b36137cb7bd 100644
    else
 diff --git a/src/gallium/frontends/zfa/meson.build b/src/gallium/frontends/zfa/meson.build
 new file mode 100644
-index 00000000000..834f903629c
+index 0000000..834f903
 --- /dev/null
 +++ b/src/gallium/frontends/zfa/meson.build
 @@ -0,0 +1,11 @@
@@ -311,10 +301,10 @@ index 00000000000..834f903629c
 \ No newline at end of file
 diff --git a/src/gallium/frontends/zfa/zfa.c b/src/gallium/frontends/zfa/zfa.c
 new file mode 100644
-index 00000000000..56c794283c0
+index 0000000..2ece418
 --- /dev/null
 +++ b/src/gallium/frontends/zfa/zfa.c
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,344 @@
 +
 +#include <kopper_interface.h>
 +#include <vulkan/vulkan_android.h>
@@ -650,38 +640,30 @@ index 00000000000..56c794283c0
 +
 +   global_fscreen->screen->flush_frontbuffer(st->screen, st->pipe, res, 0, 0, NULL, 0, NULL);
 +}
-\ No newline at end of file
++/* RimDroid addition: release the current st context from the CALLING thread.
++ * Needed for legal single-context migration between threads (GL context handoff:
++ * MakeCurrent(NULL) on thread A, MakeCurrent(ctx) on thread B) and for the
++ * multithreaded-rendering roadmap. Mirrors st_api_make_current(NULL, NULL, NULL). */
++GLAPI GLboolean GLAPIENTRY
++zfaReleaseCurrent(void)
++{
++   return st_api_make_current(NULL, NULL, NULL);
++}
 diff --git a/src/gallium/meson.build b/src/gallium/meson.build
-index 68f19d0d5dc..cee07ee06b4 100644
+index c26e98e..8c41897 100644
 --- a/src/gallium/meson.build
 +++ b/src/gallium/meson.build
-@@ -233,6 +233,10 @@ if with_osmesa
-   subdir('frontends/osmesa')
-   subdir('targets/osmesa')
+@@ -252,3 +252,7 @@ if with_teflon
+   subdir('frontends/teflon')
+   subdir('targets/teflon')
  endif
 +if with_zfa
 +  subdir('frontends/zfa')
 +  subdir('targets/zfa')
 +endif
- if with_gallium_xa
-   subdir('frontends/xa')
-   subdir('targets/xa')
-diff --git a/src/gallium/targets/osmesa/meson.build b/src/gallium/targets/osmesa/meson.build
-index 3c371616e7e..bec89dea1af 100644
---- a/src/gallium/targets/osmesa/meson.build
-+++ b/src/gallium/targets/osmesa/meson.build
-@@ -38,7 +38,7 @@ libosmesa = shared_library(
-     libmesa, libgallium, libws_null, osmesa_link_with,
-   ],
-   dependencies : [
--    dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
-+    dep_ws2_32, dep_thread, dep_clock, dep_unwind, idep_mesautil, driver_swrast, driver_zink
-   ],
-   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
-   soversion : host_machine.system() == 'windows' ? '' : '8',
 diff --git a/src/gallium/targets/zfa/meson.build b/src/gallium/targets/zfa/meson.build
 new file mode 100644
-index 00000000000..9b22cb73db3
+index 0000000..9b22cb7
 --- /dev/null
 +++ b/src/gallium/targets/zfa/meson.build
 @@ -0,0 +1,23 @@
@@ -705,15 +687,15 @@ index 00000000000..9b22cb73db3
 +        libmesa, libgallium, zfa_link_with
 +    ],
 +    dependencies : [
-+            driver_zink, driver_swrast
++            driver_zink
 +    ],
 +)
 \ No newline at end of file
 diff --git a/src/gallium/targets/zfa/zfa_target.c b/src/gallium/targets/zfa/zfa_target.c
 new file mode 100644
-index 00000000000..e69de29bb2d
+index 0000000..e69de29
 diff --git a/src/util/os_misc.c b/src/util/os_misc.c
-index 4b7916634b3..b814d62ed6d 100644
+index 4b79166..b814d62 100644
 --- a/src/util/os_misc.c
 +++ b/src/util/os_misc.c
 @@ -213,11 +213,11 @@ const char *
