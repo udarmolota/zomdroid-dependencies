@@ -307,7 +307,7 @@ index 1ab36be..8b2d8c0 100644
  
  if platform.system() == "Darwin":
 diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
-index ea88f06..c88eaae 100644
+index ea88f06..526e9f6 100644
 --- a/src/gallium/drivers/zink/zink_kopper.c
 +++ b/src/gallium/drivers/zink/zink_kopper.c
 @@ -69,6 +69,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
@@ -394,7 +394,22 @@ index ea88f06..c88eaae 100644
     assert(res->obj->dt);
     assert(!res->obj->present);
     assert(zink_kopper_acquired(res->obj->dt, res->obj->dt_idx));
-@@ -835,6 +870,13 @@ out:
+@@ -778,7 +813,13 @@ kopper_present(void *data, void *gdata, int thread_idx)
+    swapchain->last_present = cpi->image;
+    if (cpi->indefinite_acquire)
+       p_atomic_dec(&swapchain->num_acquires);
+-   if (error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
++   /* RimDroid (Android): DO NOT recreate the swapchain on VK_SUBOPTIMAL_KHR. Our ANativeWindow
++    * is ROTATE_90 while the swapchain is IDENTITY, so EVERY present is "suboptimal" — honoring it
++    * caused an endless recreation storm: ~2.6GB of leaked old swapchains (kgsl BOs bypassing
++    * zink_bo accounting), the NULL-dt present race, and frozen loading-screen updates. The Android
++    * compositor handles the rotation; suboptimal-but-successful presents are fine.
++    * (VK_ERROR_OUT_OF_DATE_KHR still recreates — see zink_kopper_acquire.) */
++   if (0 && error2 == VK_SUBOPTIMAL_KHR && cdt->swapchain == swapchain)
+       cpi->res->obj->new_dt = true;
+ 
+    /* it's illegal to destroy semaphores if they're in use by a cmdbuf.
+@@ -835,6 +876,13 @@ out:
  void
  zink_kopper_present_queue(struct zink_screen *screen, struct zink_resource *res, unsigned nrects, struct pipe_box *boxes)
  {
