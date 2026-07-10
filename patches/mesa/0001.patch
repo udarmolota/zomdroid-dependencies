@@ -157,15 +157,77 @@ index ddb67b3..98805d2 100644
  
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
+diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
+index 0916f44..283d213 100644
+--- a/src/gallium/drivers/zink/zink_batch.c
++++ b/src/gallium/drivers/zink/zink_batch.c
+@@ -228,6 +228,43 @@ zink_batch_reset_all(struct zink_context *ctx)
+    }
+ }
+ 
++/* RimDroid: eagerly reset COMPLETED batch states from the head of the list, releasing their
++ * staging BOs / resource refs NOW instead of on lazy reuse. Mirrors the reuse conditions in
++ * get_batch_state exactly (submitted + last_finished/completed, head only, never the last
++ * in-flight state) — so it frees only what upstream itself considers reusable. Called from the
++ * end of zink_flush: RimWorld 1.6 uploads ~1.3GB inside one frame and the lazily-recycled
++ * staging piles up to gigabytes, LMK-killing the app on Android. */
++extern uint64_t rd_free_total;
++void
++zink_reap_completed_batch_states(struct zink_context *ctx)
++{
++   struct zink_screen *screen = zink_screen(ctx->base.screen);
++   unsigned reaped = 0;
++   uint64_t freed_before = rd_free_total;
++   while (ctx->batch_states && ctx->batch_states->next &&
++          p_atomic_read(&ctx->batch_states->fence.submitted) &&
++          (zink_screen_check_last_finished(screen, ctx->batch_states->fence.batch_id) ||
++           p_atomic_read(&ctx->batch_states->fence.completed))) {
++      struct zink_batch_state *bs = ctx->batch_states;
++      pop_batch_state(ctx);
++      zink_reset_batch_state(ctx, bs);
++      if (ctx->last_free_batch_state)
++         ctx->last_free_batch_state->next = bs;
++      else
++         ctx->free_batch_states = bs;
++      ctx->last_free_batch_state = bs;
++      reaped++;
++   }
++   if (reaped) {
++      static int rd_logn = 0;
++      if (rd_logn < 64) {
++         rd_logn++;
++         mesa_logw("RDZFA reap: %u states, freed %uMB (net now tracked in zink_bo)",
++                   reaped, (unsigned)((rd_free_total - freed_before) >> 20));
++      }
++   }
++}
++
+ /* called only on context destruction */
+ void
+ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs)
+diff --git a/src/gallium/drivers/zink/zink_batch.h b/src/gallium/drivers/zink/zink_batch.h
+index f97d8d5..c5282b5 100644
+--- a/src/gallium/drivers/zink/zink_batch.h
++++ b/src/gallium/drivers/zink/zink_batch.h
+@@ -47,6 +47,9 @@ zink_clear_batch_state(struct zink_context *ctx, struct zink_batch_state *bs);
+ void
+ zink_batch_reset_all(struct zink_context *ctx);
+ 
++void
++zink_reap_completed_batch_states(struct zink_context *ctx);
++
+ void
+ zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs);
+ 
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index e3ba593..d75e418 100644
+index e3ba593..fb2f819 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
 @@ -120,10 +120,12 @@ static unsigned get_slab_entry_alignment(struct zink_screen *screen, unsigned si
     return entry_size;
  }
  
-+static uint64_t rd_alloc_total = 0, rd_alloc_calls = 0, rd_free_total = 0;
++uint64_t rd_alloc_total = 0, rd_alloc_calls = 0, rd_free_total = 0;
  static void
  bo_destroy(struct zink_screen *screen, struct pb_buffer *pbuf)
  {
@@ -219,6 +281,19 @@ index e3ba593..d75e418 100644
                   (void*)bo_destroy, (void*)bo_can_reclaim);
  
     unsigned min_slab_order = MIN_SLAB_ORDER;  /* 256 bytes */
+diff --git a/src/gallium/drivers/zink/zink_context.c b/src/gallium/drivers/zink/zink_context.c
+index 9adda46..0aa9f4f 100644
+--- a/src/gallium/drivers/zink/zink_context.c
++++ b/src/gallium/drivers/zink/zink_context.c
+@@ -4174,6 +4174,8 @@ zink_flush(struct pipe_context *pctx,
+       if (!(flags & (PIPE_FLUSH_DEFERRED | PIPE_FLUSH_ASYNC)))
+          sync_flush(ctx, bs);
+    }
++   /* RimDroid: reclaim staging of completed batches on every flush (see zink_batch.c). */
++   zink_reap_completed_batch_states(ctx);
+ }
+ 
+ void
 diff --git a/src/gallium/drivers/zink/zink_instance.py b/src/gallium/drivers/zink/zink_instance.py
 index 1ab36be..8b2d8c0 100644
 --- a/src/gallium/drivers/zink/zink_instance.py
