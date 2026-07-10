@@ -27,6 +27,11 @@ cmake_to_meson_buildtype() {
     esac
 }
 
+echo "==> Ensuring meson >= 1.4 (Mesa 25.2.x requirement; Ubuntu apt ships 1.3.2)..."
+sudo pip3 install --upgrade meson ninja 2>/dev/null || pip3 install --user --upgrade meson ninja
+hash -r
+meson --version
+
 ROOT_DIR="$(pwd)"
 REPOS_DIR="$ROOT_DIR/repos"
 PATCHES_DIR="$ROOT_DIR/patches"
