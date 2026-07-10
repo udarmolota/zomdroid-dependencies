@@ -158,10 +158,10 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..283d213 100644
+index 0916f44..d850223 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -228,6 +228,43 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +228,46 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -192,12 +192,15 @@ index 0916f44..283d213 100644
 +      ctx->last_free_batch_state = bs;
 +      reaped++;
 +   }
-+   if (reaped) {
-+      static int rd_logn = 0;
-+      if (rd_logn < 64) {
-+         rd_logn++;
-+         mesa_logw("RDZFA reap: %u states, freed %uMB (net now tracked in zink_bo)",
-+                   reaped, (unsigned)((rd_free_total - freed_before) >> 20));
++   {
++      /* Log live batch-state count on every reap attempt (rate-limited by change): if the count
++         grows unbounded during the atlas bake, Turnip CS chunks pile up inside them (the ~4MB
++         kgsl BO flood bypassing zink accounting). */
++      static unsigned rd_last_cnt = 0;
++      if (reaped || ctx->batch_states_count != rd_last_cnt) {
++         rd_last_cnt = ctx->batch_states_count;
++         mesa_logw("RDZFA reap: %u reaped, live_states=%u, freed %uMB",
++                   reaped, ctx->batch_states_count, (unsigned)((rd_free_total - freed_before) >> 20));
 +      }
 +   }
 +}
