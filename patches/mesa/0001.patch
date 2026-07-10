@@ -158,10 +158,10 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..aa686ec 100644
+index 0916f44..bd6dfdc 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -228,6 +228,76 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +228,79 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -186,8 +186,11 @@ index 0916f44..aa686ec 100644
 +   struct zink_batch_state *cur = ctx->batch_states;
 +   while (cur && cur->next) {
 +      if (p_atomic_read(&cur->fence.submitted) &&
-+          (zink_screen_check_last_finished(screen, cur->fence.batch_id) ||
-+           p_atomic_read(&cur->fence.completed))) {
++          /* STRICT timeline confirmation only, and no outstanding tc-fences: reaping a state
++             whose fence/query results are still being observed stalls the app (seen: loading
++             froze while a thread polled forever). */
++          zink_screen_check_last_finished(screen, cur->fence.batch_id) &&
++          !util_dynarray_num_elements(&cur->fence.mfences, struct zink_tc_fence *)) {
 +         struct zink_batch_state *bs = cur;
 +         *prev = cur->next;
 +         cur = cur->next;
