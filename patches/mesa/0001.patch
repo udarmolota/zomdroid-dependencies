@@ -663,15 +663,11 @@ index c26e98e..8c41897 100644
 +endif
 diff --git a/src/gallium/targets/zfa/meson.build b/src/gallium/targets/zfa/meson.build
 new file mode 100644
-index 0000000..9b22cb7
+index 0000000..5b531ee
 --- /dev/null
 +++ b/src/gallium/targets/zfa/meson.build
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,19 @@
 +zfa_link_with = []
-+
-+if with_shared_glapi
-+    zfa_link_with += libglapi
-+endif
 +
 +libzfa = shared_library(
 +    'zfa',
