@@ -220,7 +220,7 @@ index f97d8d5..c5282b5 100644
  zink_batch_state_destroy(struct zink_screen *screen, struct zink_batch_state *bs);
  
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index e3ba593..fb2f819 100644
+index e3ba593..a7910a0 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
 @@ -120,10 +120,12 @@ static unsigned get_slab_entry_alignment(struct zink_screen *screen, unsigned si
@@ -236,12 +236,17 @@ index e3ba593..fb2f819 100644
  
  #ifdef ZINK_USE_DMABUF
     if (bo->mem && !bo->u.real.use_reusable_pool) {
-@@ -297,6 +299,20 @@ bo_create_internal(struct zink_screen *screen,
+@@ -297,6 +299,29 @@ bo_create_internal(struct zink_screen *screen,
        return NULL;
     }
  
-+   /* RimDroid accounting: gross/net GPU memory + oversized single allocations. */
++   /* RimDroid accounting: gross/net + size-bucket histogram + dedicated flag. The killer on
++      Android is a flood of ~4MB BOs (kgsl maps: 1105 pieces / 4.45GB at death) — name it. */
 +   {
++      static uint64_t rd_b_cnt[5], rd_b_sz[5];   /* <1MB, 1-4MB, 4-32MB, 32-128MB, >=128MB */
++      int rd_bi = mai.allocationSize < (1ull<<20) ? 0 : mai.allocationSize < (4ull<<20) ? 1 :
++                  mai.allocationSize < (32ull<<20) ? 2 : mai.allocationSize < (128ull<<20) ? 3 : 4;
++      rd_b_cnt[rd_bi]++; rd_b_sz[rd_bi] += mai.allocationSize;
 +      rd_alloc_total += mai.allocationSize; rd_alloc_calls++;
 +      if (mai.allocationSize >= (128ull<<20))
 +         mesa_logw("RDZFA zink_bo BIG alloc %uMB (heap=%d type=%d)",
@@ -249,15 +254,19 @@ index e3ba593..fb2f819 100644
 +      static uint64_t rd_last = 0;
 +      if (rd_alloc_total - rd_last >= (256ull<<20)) {
 +         rd_last = rd_alloc_total;
-+         mesa_logw("RDZFA zink_bo gross=%uMB net=%dMB calls=%u (this=%uKB)",
++         mesa_logw("RDZFA zink_bo gross=%uMB net=%dMB calls=%u ded=%d | <1M:%u/%uMB 1-4M:%u/%uMB 4-32M:%u/%uMB 32-128M:%u/%uMB",
 +                   (unsigned)(rd_alloc_total>>20), (int)((int64_t)(rd_alloc_total-rd_free_total)>>20),
-+                   (unsigned)rd_alloc_calls, (unsigned)(mai.allocationSize>>10));
++                   (unsigned)rd_alloc_calls, pNext?1:0,
++                   (unsigned)rd_b_cnt[0], (unsigned)(rd_b_sz[0]>>20),
++                   (unsigned)rd_b_cnt[1], (unsigned)(rd_b_sz[1]>>20),
++                   (unsigned)rd_b_cnt[2], (unsigned)(rd_b_sz[2]>>20),
++                   (unsigned)rd_b_cnt[3], (unsigned)(rd_b_sz[3]>>20));
 +      }
 +   }
     VkResult ret = VKSCR(AllocateMemory)(screen->dev, &mai, NULL, &bo->mem);
     if (!zink_screen_handle_vkresult(screen, ret)) {
        mesa_loge("zink: couldn't allocate memory: heap=%u size=%" PRIu64, heap, size);
-@@ -715,6 +731,8 @@ zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
+@@ -715,6 +740,8 @@ zink_bo_map(struct zink_screen *screen, struct zink_bo *bo)
         * be atomic thanks to the lock. */
        cpu = real->u.real.cpu_ptr;
        if (!cpu) {
@@ -266,7 +275,7 @@ index e3ba593..fb2f819 100644
           VkResult result = VKSCR(MapMemory)(screen->dev, real->mem, 0, real->base.base.size, 0, &cpu);
           if (result != VK_SUCCESS) {
              mesa_loge("ZINK: vkMapMemory failed (%s)", vk_Result_to_str(result));
-@@ -1391,9 +1409,13 @@ zink_bo_init(struct zink_screen *screen)
+@@ -1391,9 +1418,13 @@ zink_bo_init(struct zink_screen *screen)
     for (uint32_t i = 0; i < screen->info.mem_props.memoryHeapCount; ++i)
        total_mem += screen->info.mem_props.memoryHeaps[i].size;
     /* Create managers. */
