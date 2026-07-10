@@ -158,10 +158,10 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..d850223 100644
+index 0916f44..aa686ec 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -228,6 +228,46 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +228,76 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -178,19 +178,49 @@ index 0916f44..d850223 100644
 +   struct zink_screen *screen = zink_screen(ctx->base.screen);
 +   unsigned reaped = 0;
 +   uint64_t freed_before = rd_free_total;
-+   while (ctx->batch_states && ctx->batch_states->next &&
-+          p_atomic_read(&ctx->batch_states->fence.submitted) &&
-+          (zink_screen_check_last_finished(screen, ctx->batch_states->fence.batch_id) ||
-+           p_atomic_read(&ctx->batch_states->fence.completed))) {
-+      struct zink_batch_state *bs = ctx->batch_states;
-+      pop_batch_state(ctx);
-+      zink_reset_batch_state(ctx, bs);
-+      if (ctx->last_free_batch_state)
-+         ctx->last_free_batch_state->next = bs;
-+      else
-+         ctx->free_batch_states = bs;
-+      ctx->last_free_batch_state = bs;
-+      reaped++;
++   /* SCAN-PAST-HEAD (brief v15): upstream recycles strictly from the list head, so one stuck
++      state poisons the whole list (measured: 1.45M live states, 0 reused). Walk the list and
++      unlink ANY submitted+completed state; never touch unsubmitted/incomplete ones and never
++      the tail (mirrors upstream's ->next guard). */
++   struct zink_batch_state **prev = &ctx->batch_states;
++   struct zink_batch_state *cur = ctx->batch_states;
++   while (cur && cur->next) {
++      if (p_atomic_read(&cur->fence.submitted) &&
++          (zink_screen_check_last_finished(screen, cur->fence.batch_id) ||
++           p_atomic_read(&cur->fence.completed))) {
++         struct zink_batch_state *bs = cur;
++         *prev = cur->next;
++         cur = cur->next;
++         ctx->batch_states_count--;
++         if (ctx->last_batch_state == bs)
++            ctx->last_batch_state = NULL;
++         zink_reset_batch_state(ctx, bs);
++         if (ctx->last_free_batch_state)
++            ctx->last_free_batch_state->next = bs;
++         else
++            ctx->free_batch_states = bs;
++         ctx->last_free_batch_state = bs;
++         bs->next = NULL;
++         reaped++;
++      } else {
++         prev = &cur->next;
++         cur = cur->next;
++      }
++   }
++   /* One-shot head autopsy whenever the list is badly backed up: WHY is the head stuck? */
++   {
++      static unsigned rd_autopsy_at = 64;
++      if (ctx->batch_states && ctx->batch_states_count >= rd_autopsy_at) {
++         struct zink_batch_state *h = ctx->batch_states;
++         mesa_logw("RDZFA head-autopsy: count=%u submitted=%d completed=%d batch_id=%u last_finished_ok=%d has_work=%d",
++                   ctx->batch_states_count,
++                   (int)p_atomic_read(&h->fence.submitted),
++                   (int)p_atomic_read(&h->fence.completed),
++                   (unsigned)h->fence.batch_id,
++                   (int)zink_screen_check_last_finished(screen, h->fence.batch_id),
++                   (int)h->has_work);
++         rd_autopsy_at *= 4;
++      }
 +   }
 +   {
 +      /* Log live batch-state count on every reap attempt (rate-limited by change): if the count
