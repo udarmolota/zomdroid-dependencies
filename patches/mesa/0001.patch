@@ -158,10 +158,28 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_bo.c b/src/gallium/drivers/zink/zink_bo.c
-index e3ba593..e0b4fd2 100644
+index e3ba593..7478dac 100644
 --- a/src/gallium/drivers/zink/zink_bo.c
 +++ b/src/gallium/drivers/zink/zink_bo.c
-@@ -1391,9 +1391,13 @@ zink_bo_init(struct zink_screen *screen)
+@@ -297,6 +297,17 @@ bo_create_internal(struct zink_screen *screen,
+       return NULL;
+    }
+ 
++   /* RimDroid accounting: name where zink's GPU memory actually goes (net = alloc - free). */
++   {
++      static uint64_t rd_alloc_total = 0, rd_alloc_calls = 0;
++      rd_alloc_total += mai.allocationSize; rd_alloc_calls++;
++      static uint64_t rd_last = 0;
++      if (rd_alloc_total - rd_last >= (256ull<<20)) {
++         rd_last = rd_alloc_total;
++         mesa_logw("RDZFA zink_bo alloc total=%uMB calls=%u (this=%uKB)",
++                   (unsigned)(rd_alloc_total>>20), (unsigned)rd_alloc_calls, (unsigned)(mai.allocationSize>>10));
++      }
++   }
+    VkResult ret = VKSCR(AllocateMemory)(screen->dev, &mai, NULL, &bo->mem);
+    if (!zink_screen_handle_vkresult(screen, ret)) {
+       mesa_loge("zink: couldn't allocate memory: heap=%u size=%" PRIu64, heap, size);
+@@ -1391,9 +1402,13 @@ zink_bo_init(struct zink_screen *screen)
     for (uint32_t i = 0; i < screen->info.mem_props.memoryHeapCount; ++i)
        total_mem += screen->info.mem_props.memoryHeaps[i].size;
     /* Create managers. */
