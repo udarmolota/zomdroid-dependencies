@@ -663,7 +663,7 @@ index c26e98e..8c41897 100644
 +endif
 diff --git a/src/gallium/targets/zfa/meson.build b/src/gallium/targets/zfa/meson.build
 new file mode 100644
-index 0000000..5b531ee
+index 0000000..a6cafa4
 --- /dev/null
 +++ b/src/gallium/targets/zfa/meson.build
 @@ -0,0 +1,19 @@
@@ -678,7 +678,7 @@ index 0000000..5b531ee
 +        inc_include, inc_src, inc_gallium, inc_gallium_aux,
 +        inc_gallium_drivers,
 +    ],
-+    link_whole : [libzfa_st, libglapi_static],
++    link_whole : [libzfa_st, libglapi],
 +    link_with : [
 +        libmesa, libgallium, zfa_link_with
 +    ],
