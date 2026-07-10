@@ -158,10 +158,10 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..bd6dfdc 100644
+index 0916f44..508d07e 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
-@@ -228,6 +228,79 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +228,82 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -190,7 +190,10 @@ index 0916f44..bd6dfdc 100644
 +             whose fence/query results are still being observed stalls the app (seen: loading
 +             froze while a thread polled forever). */
 +          zink_screen_check_last_finished(screen, cur->fence.batch_id) &&
-+          !util_dynarray_num_elements(&cur->fence.mfences, struct zink_tc_fence *)) {
++          !util_dynarray_num_elements(&cur->fence.mfences, struct zink_tc_fence *) &&
++          /* the context's pending deferred fence may reference a state's fence without an
++             mfence entry — resetting it under the waiter stalls loading (seen at tex=544MB) */
++          ctx->deferred_fence != &cur->fence) {
 +         struct zink_batch_state *bs = cur;
 +         *prev = cur->next;
 +         cur = cur->next;
