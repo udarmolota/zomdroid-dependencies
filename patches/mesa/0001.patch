@@ -170,7 +170,7 @@ index 1ab36be..8b2d8c0 100644
  
  if platform.system() == "Darwin":
 diff --git a/src/gallium/drivers/zink/zink_kopper.c b/src/gallium/drivers/zink/zink_kopper.c
-index ea88f06..8ccae4c 100644
+index ea88f06..c88eaae 100644
 --- a/src/gallium/drivers/zink/zink_kopper.c
 +++ b/src/gallium/drivers/zink/zink_kopper.c
 @@ -69,6 +69,11 @@ init_dt_type(struct kopper_displaytarget *cdt)
@@ -246,6 +246,31 @@ index ea88f06..8ccae4c 100644
  #endif
     default:
        unreachable("unsupported!");
+@@ -724,6 +755,10 @@ zink_kopper_acquire_submit(struct zink_screen *screen, struct zink_resource *res
+ VkSemaphore
+ zink_kopper_present(struct zink_screen *screen, struct zink_resource *res)
+ {
++   if (!res->obj || !res->obj->dt) {
++      mesa_logw("RDZFA present: no dt, skipping");
++      return VK_NULL_HANDLE;
++   }
+    assert(res->obj->dt);
+    assert(!res->obj->present);
+    assert(zink_kopper_acquired(res->obj->dt, res->obj->dt_idx));
+@@ -835,6 +870,13 @@ out:
+ void
+ zink_kopper_present_queue(struct zink_screen *screen, struct zink_resource *res, unsigned nrects, struct pipe_box *boxes)
+ {
++   /* RimDroid: the drawable can lose its displaytarget when the swapchain is torn down mid-frame
++      (our rotated Android surface makes every present SUBOPTIMAL -> constant recreation). Skip the
++      present instead of dereferencing NULL->dt (crashed at zink_kopper_present_queue+0x2c). */
++   if (!res->obj || !res->obj->dt || !res->obj->present) {
++      mesa_logw("RDZFA present_queue: no dt/present, skipping");
++      return;
++   }
+    assert(res->obj->dt);
+    struct kopper_displaytarget *cdt = res->obj->dt;
+    assert(zink_kopper_acquired(res->obj->dt, res->obj->dt_idx));
 diff --git a/src/gallium/drivers/zink/zink_kopper.h b/src/gallium/drivers/zink/zink_kopper.h
 index fba05a0..5c20065 100644
 --- a/src/gallium/drivers/zink/zink_kopper.h
