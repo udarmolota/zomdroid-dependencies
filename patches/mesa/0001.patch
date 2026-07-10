@@ -89,6 +89,60 @@ index 2392792..b796e0f 100644
  option(
    'tools',
    type : 'array',
+diff --git a/src/freedreno/drm/freedreno_bo.c b/src/freedreno/drm/freedreno_bo.c
+index 1f99f36..1ea7abb 100644
+--- a/src/freedreno/drm/freedreno_bo.c
++++ b/src/freedreno/drm/freedreno_bo.c
+@@ -629,7 +629,7 @@ __fd_bo_map(struct fd_bo *bo)
+    if (!bo->map) {
+       bo->map = bo->funcs->map(bo);
+       if (bo->map == MAP_FAILED) {
+-         ERROR_MSG("mmap failed: %s", strerror(errno));
++         ERROR_MSG("mmap failed: %s (RDZFA size=%u MB)", strerror(errno), (unsigned)(bo->size>>20));
+          bo->map = NULL;
+       }
+    }
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+index aab25da..c20e08f 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -5,6 +5,8 @@
+ 
+ #include "tu_knl.h"
+ 
++static uint64_t rd_kgsl_bo_total = 0;
++
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <poll.h>
+@@ -237,11 +239,14 @@ kgsl_bo_init(struct tu_device *dev,
+       .base = base,
+    };
+ 
++   rd_kgsl_bo_total += req.mmapsize;
+    if (flags & TU_BO_ALLOC_REPLAYABLE) {
+       uint64_t offset = req.id << 12;
+       void *map = mmap((void *)client_iova, bo->size, PROT_READ | PROT_WRITE,
+                        MAP_SHARED, dev->physical_device->local_fd, offset);
+       if (map == MAP_FAILED) {
++         mesa_loge("RDZFA kgsl replayable mmap FAILED size=%llu MB total_bo=%llu MB errno=%d",
++                   (unsigned long long)(bo->size>>20), (unsigned long long)(rd_kgsl_bo_total>>20), errno);
+          kgsl_bo_finish(dev, bo);
+ 
+          return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY,
+@@ -351,8 +356,11 @@ kgsl_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+                  bo->shared_fd, 0);
+    }
+ 
+-   if (map == MAP_FAILED)
++   if (map == MAP_FAILED) {
++      mesa_loge("RDZFA kgsl_bo_map mmap FAILED size=%llu MB total_bo=%llu MB errno=%d",
++                (unsigned long long)(bo->size>>20), (unsigned long long)(rd_kgsl_bo_total>>20), errno);
+       return vk_error(dev, VK_ERROR_MEMORY_MAP_FAILED);
++   }
+ 
+    bo->map = map;
+    TU_RMV(bo_map, dev, bo);
 diff --git a/src/gallium/auxiliary/target-helpers/inline_sw_helper.h b/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
 index ddb67b3..98805d2 100644
 --- a/src/gallium/auxiliary/target-helpers/inline_sw_helper.h
