@@ -92,7 +92,6 @@ meson setup . "$REPO_DIR" \
   -Degl=disabled \
   -Dgbm=disabled \
   -Dllvm=disabled \
-  -Dgallium-xa=disabled \
   -Dopengl=true \
   -Dvulkan-drivers=freedreno \
   -Dfreedreno-kmds=kgsl \
