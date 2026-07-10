@@ -110,8 +110,7 @@ if [ "$BUILD_TYPE_CMAKE" = "Release" ]; then
   echo "==> Stripping libvulkan_freedreno.so..."
   "$STRIP_BIN" --strip-unneeded "src/freedreno/vulkan/libvulkan_freedreno.so"
 
-  echo "==> Stripping libzfa.so..."
-  "$STRIP_BIN" --strip-unneeded "src/gallium/targets/zfa/libzfa.so"
+  echo "==> NOT stripping libzfa.so (keep symbols so native crashes self-identify)"
 fi
 
 mkdir -p "$TARGETS_DIR"
