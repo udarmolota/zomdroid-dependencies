@@ -158,7 +158,7 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..62eae64 100644
+index 0916f44..3aa137a 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -1,5 +1,6 @@
@@ -168,7 +168,7 @@ index 0916f44..62eae64 100644
  #include "zink_descriptors.h"
  #include "zink_kopper.h"
  #include "zink_program.h"
-@@ -228,6 +229,114 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +229,155 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -220,6 +220,41 @@ index 0916f44..62eae64 100644
 +      state poisons the whole list (measured: 1.45M live states, 0 reused). Walk the list and
 +      unlink ANY submitted+completed state; never touch unsubmitted/incomplete ones and never
 +      the tail (mirrors upstream's ->next guard). */
++   /* QUARANTINE (v5): resetting+reusing a state IMMEDIATELY after its timeline completes caused
++      GPU READ/TRANS pagefaults -> VK_ERROR_DEVICE_LOST (kgsl pagefault_procs: com.rimdroid, all
++      READ/translation). Two ABA-style hazards, both from recycling HOT states (upstream head-pop
++      only ever recycles ancient ones): (a) stale res->obj->reads/writes pointers alias the reused
++      state's fresh batch, so zink skips re-tracking the resource in the new batch and its BO can
++      be freed under a live GPU read; (b) the reset's unrefs free BOs microseconds after the fence
++      signals, racing residual GPU traffic. So: unlink completed states from the live list NOW
++      (recycling stays unblocked), but hold them un-reset in a small FIFO until RD_QUAR_DELAY more
++      batches have fully finished, THEN reset (frees memory) and hand to the free list. At storm
++      rate (~300 flushes/s) the delay is ~25ms of extra retention — negligible for RSS.
++      States quarantined at context-destroy time are intentionally leaked (process is exiting). */
++   #define RD_QUAR_SLOTS 64
++   #define RD_QUAR_DELAY 8
++   static struct { struct zink_context *qctx; struct zink_batch_state *bs; uint32_t release_id; }
++      rd_quar[RD_QUAR_SLOTS];
++   /* the table is shared by all contexts; owner threads of different contexts reap concurrently */
++   static simple_mtx_t rd_quar_mtx = SIMPLE_MTX_INITIALIZER;
++   unsigned released = 0, quarantined = 0;
++   simple_mtx_lock(&rd_quar_mtx);
++   for (unsigned i = 0; i < RD_QUAR_SLOTS; i++) {
++      if (rd_quar[i].qctx == ctx && zink_screen_check_last_finished(screen, rd_quar[i].release_id)) {
++         struct zink_batch_state *bs = rd_quar[i].bs;
++         rd_quar[i].qctx = NULL;
++         rd_quar[i].bs = NULL;
++         zink_reset_batch_state(ctx, bs);
++         if (ctx->last_free_batch_state)
++            ctx->last_free_batch_state->next = bs;
++         else
++            ctx->free_batch_states = bs;
++         ctx->last_free_batch_state = bs;
++         bs->next = NULL;
++         released++;
++      }
++   }
++   uint32_t newest_id = ctx->last_batch_state ? (uint32_t)ctx->last_batch_state->fence.batch_id : 0;
 +   struct zink_batch_state **prev = &ctx->batch_states;
 +   struct zink_batch_state *cur = ctx->batch_states;
 +   while (cur && cur->next) {
@@ -232,25 +267,31 @@ index 0916f44..62eae64 100644
 +          /* the context's pending deferred fence may reference a state's fence without an
 +             mfence entry — resetting it under the waiter stalls loading (seen at tex=544MB) */
 +          ctx->deferred_fence != &cur->fence) {
++         unsigned slot;
++         for (slot = 0; slot < RD_QUAR_SLOTS; slot++)
++            if (!rd_quar[slot].qctx)
++               break;
++         if (slot == RD_QUAR_SLOTS)
++            break;   /* quarantine full — stop reaping this round, retry next flush */
 +         struct zink_batch_state *bs = cur;
 +         *prev = cur->next;
 +         cur = cur->next;
 +         ctx->batch_states_count--;
 +         if (ctx->last_batch_state == bs)
 +            ctx->last_batch_state = NULL;
-+         zink_reset_batch_state(ctx, bs);
-+         if (ctx->last_free_batch_state)
-+            ctx->last_free_batch_state->next = bs;
-+         else
-+            ctx->free_batch_states = bs;
-+         ctx->last_free_batch_state = bs;
 +         bs->next = NULL;
++         rd_quar[slot].qctx = ctx;
++         rd_quar[slot].bs = bs;
++         rd_quar[slot].release_id = newest_id + RD_QUAR_DELAY;
++         quarantined++;
 +         reaped++;
 +      } else {
 +         prev = &cur->next;
 +         cur = cur->next;
 +      }
 +   }
++   simple_mtx_unlock(&rd_quar_mtx);
++   (void)quarantined;
 +   /* One-shot head autopsy whenever the list is badly backed up: WHY is the head stuck? */
 +   {
 +      static unsigned rd_autopsy_at = 64;
@@ -273,9 +314,9 @@ index 0916f44..62eae64 100644
 +      static unsigned rd_last_cnt = 0;
 +      if (reaped || ctx->batch_states_count != rd_last_cnt) {
 +         rd_last_cnt = ctx->batch_states_count;
-+         mesa_logw("RDZFA reap: %u reaped, live_states=%u, freed %uMB ctx=%p",
-+                   reaped, ctx->batch_states_count, (unsigned)((rd_free_total - freed_before) >> 20),
-+                   (void*)ctx);
++         mesa_logw("RDZFA reap: %u reaped, %u released, live_states=%u, freed %uMB ctx=%p",
++                   reaped, released, ctx->batch_states_count,
++                   (unsigned)((rd_free_total - freed_before) >> 20), (void*)ctx);
 +      }
 +   }
 +}
