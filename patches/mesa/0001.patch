@@ -158,7 +158,7 @@ index ddb67b3..98805d2 100644
  /* Helper function to choose and instantiate one of the software rasterizers:
   * llvmpipe, softpipe.
 diff --git a/src/gallium/drivers/zink/zink_batch.c b/src/gallium/drivers/zink/zink_batch.c
-index 0916f44..3aa137a 100644
+index 0916f44..55ec20c 100644
 --- a/src/gallium/drivers/zink/zink_batch.c
 +++ b/src/gallium/drivers/zink/zink_batch.c
 @@ -1,5 +1,6 @@
@@ -168,7 +168,7 @@ index 0916f44..3aa137a 100644
  #include "zink_descriptors.h"
  #include "zink_kopper.h"
  #include "zink_program.h"
-@@ -228,6 +229,155 @@ zink_batch_reset_all(struct zink_context *ctx)
+@@ -228,6 +229,162 @@ zink_batch_reset_all(struct zink_context *ctx)
     }
  }
  
@@ -310,9 +310,16 @@ index 0916f44..3aa137a 100644
 +   {
 +      /* Log live batch-state count on every reap attempt (rate-limited by change): if the count
 +         grows unbounded during the atlas bake, Turnip CS chunks pile up inside them (the ~4MB
-+         kgsl BO flood bypassing zink accounting). */
++         kgsl BO flood bypassing zink accounting).
++         FPS FIX (2026-07-11): this fired on ~EVERY flush → ~47k logcat lines during a short
++         gameplay sample, each taking the log lock + doing I/O → irregular frame stalls. Gate it
++         behind RIMDROID_ZFA_VERBOSE=1 so production is silent; set the env to get it back for
++         memory debugging. Cache the env check once. */
++      static int rd_verbose = -1;
++      if (rd_verbose == -1)
++         rd_verbose = getenv("RIMDROID_ZFA_VERBOSE") ? 1 : 0;
 +      static unsigned rd_last_cnt = 0;
-+      if (reaped || ctx->batch_states_count != rd_last_cnt) {
++      if (rd_verbose && (reaped || ctx->batch_states_count != rd_last_cnt)) {
 +         rd_last_cnt = ctx->batch_states_count;
 +         mesa_logw("RDZFA reap: %u reaped, %u released, live_states=%u, freed %uMB ctx=%p",
 +                   reaped, released, ctx->batch_states_count,
