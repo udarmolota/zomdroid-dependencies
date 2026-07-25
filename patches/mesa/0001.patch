@@ -314,7 +314,7 @@ new file mode 100644
 index 00000000000..56c794283c0
 --- /dev/null
 +++ b/src/gallium/frontends/zfa/zfa.c
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,341 @@
 +
 +#include <kopper_interface.h>
 +#include <vulkan/vulkan_android.h>
@@ -430,6 +430,9 @@ index 00000000000..56c794283c0
 +      return false;
 +
 +   _mesa_glthread_finish(st->ctx);
++
++   if (res == NULL)   /* front texture not ready yet (weak GPUs, e.g. Adreno 610) - nothing to flush */
++      return false;
 +
 +   st->pipe->flush_resource(st->pipe, res);
 +
@@ -644,6 +647,9 @@ index 00000000000..56c794283c0
 +   struct pipe_resource *res = surface->textures[ST_ATTACHMENT_FRONT_LEFT];
 +
 +   _mesa_glthread_finish(st->ctx);
++
++   if (!res)   /* nothing bound yet - avoid tc_flush_resource(NULL) deref crash */
++      return;
 +
 +   st->pipe->flush_resource(st->pipe, res);
 +   st->pipe->flush(st->pipe, NULL, 0);
