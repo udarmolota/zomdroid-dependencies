@@ -1,0 +1,75 @@
+name: Build LWJGL Only (Android arm64)
+
+# Standalone LWJGL build, so a new LWJGL version can be produced without also rebuilding mesa,
+# assimp and the rest of "Build All" (mesa alone pulls a large apt build-dep set). Same env
+# contract as the full workflow — the build-lwjgl-*.sh scripts check every variable themselves.
+#
+# No JDK step: the C sources need jni.h, and the NDK sysroot already ships it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lwjgl_version:
+        description: 'Which build-lwjgl-<version>.sh to run'
+        required: true
+        default: '3.4.1'
+        type: choice
+        options:
+          - '3.4.1'
+          - '3.3.6'
+          - '3.2.3'
+
+jobs:
+  build:
+    name: Android ARM64 Release - lwjgl only
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download and install Android NDK
+      run: |
+          wget -q https://dl.google.com/android/repository/android-ndk-r27c-linux.zip
+          unzip -q android-ndk-r27c-linux.zip
+          echo "ANDROID_NDK_HOME=$(pwd)/android-ndk-r27c" >> $GITHUB_ENV
+
+    - name: Set env vars
+      run: |
+          echo "TOOLCHAIN_FILE_CMAKE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" >> $GITHUB_ENV
+          echo "TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64" >> $GITHUB_ENV
+          echo "ANDROID_API_LEVEL=30" >> $GITHUB_ENV
+          echo "ANDROID_ABI=arm64-v8a" >> $GITHUB_ENV
+          echo "BUILD_TYPE_CMAKE=Release" >> $GITHUB_ENV
+          echo "TARGET_TRIPLE=aarch64-linux-android" >> $GITHUB_ENV
+
+    - name: Build lwjgl ${{ inputs.lwjgl_version }}
+      run: |
+          chmod +x ./build-lwjgl-${{ inputs.lwjgl_version }}.sh
+          ./build-lwjgl-${{ inputs.lwjgl_version }}.sh
+
+    - name: Check the result is a loadable Android library
+      run: |
+          set -euo pipefail
+          READELF="$TOOLCHAIN/bin/llvm-readelf"
+          cd "targets/libs/android-$ANDROID_ABI/lwjgl-${{ inputs.lwjgl_version }}"
+          fail=0
+          for so in liblwjgl*.so; do
+            echo "=== $so ==="
+            "$READELF" -h "$so" | grep -E 'Class|Machine'
+            needed=$("$READELF" --dynamic "$so" | grep -oP 'Shared library: \[\K[^]]+' | tr '\n' ' ')
+            echo "NEEDED: $needed"
+            # glibc soname here means the sysroot was wrong and the library cannot load on Android.
+            case "$needed" in *.so.6*|*libpthread.so.0*) echo "::error::$so links against glibc"; fail=1;; esac
+          done
+          # libffi.a is linked in by path; if that path is ever wrong the linker drops it silently.
+          "$TOOLCHAIN/bin/llvm-nm" -D --defined-only liblwjgl.so | grep -q ffi_call \
+            || { echo "::error::libffi is missing from liblwjgl.so"; fail=1; }
+          exit $fail
+
+    - name: Upload targets
+      uses: actions/upload-artifact@v4
+      with:
+        name: targets-lwjgl-${{ inputs.lwjgl_version }}
+        path: targets
+        if-no-files-found: error
