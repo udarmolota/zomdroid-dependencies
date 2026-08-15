@@ -1,5 +1,6 @@
 package com.zomdroid.agent;
 
+import com.zomdroid.agent.decorators.QuickSave;
 import com.zomdroid.agent.decorators.ShaderUnit;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.asm.Advice;
@@ -42,6 +43,19 @@ public class Main {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        // Deliberately outside the renderer check above: quick save has nothing to do with which
+        // renderer is in use, and GameWindow.frameStep exists on every build we support, Build 41
+        // included. Its own try/catch, so failing here cannot take the shader patch down with it.
+        try {
+            new ByteBuddy().with(TypeValidation.DISABLED)
+                    .rebase(typePool.describe("zombie.GameWindow").resolve(), locator)
+                    .visit(Advice.to(QuickSave.frameStep.class).on(named("frameStep")))
+                    .make()
+                    .load(classLoader, ClassReloadingStrategy.of(inst));
+        } catch (Exception e) {
+            System.out.println("[quicksave] could not hook GameWindow.frameStep: " + e);
         }
     }
 }

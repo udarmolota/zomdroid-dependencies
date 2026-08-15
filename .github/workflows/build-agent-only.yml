@@ -1,0 +1,34 @@
+name: Build Agent Only (zomdroid-agent.jar)
+
+# The full "Build All" job also builds it, but only after Mesa, LWJGL, jassimp and GL4ES, which
+# means an NDK download and a long wait for a jar that needs neither. This one is Java and nothing
+# else. Maven is preinstalled on the GitHub runners, so no local toolchain is required.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: zomdroid-agent
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+          distribution: zulu
+          java-version: 17
+          cache: maven
+
+    - name: Build agent
+      run: |
+          chmod +x ./build-zomdroid-agent.sh
+          ./build-zomdroid-agent.sh
+
+    - name: Upload zomdroid-agent.jar
+      uses: actions/upload-artifact@v4
+      with:
+        name: zomdroid-agent
+        path: targets/jars/zomdroid-agent.jar
