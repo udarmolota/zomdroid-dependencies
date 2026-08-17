@@ -131,14 +131,16 @@ public class QuickSave {
                 say(player, "Backup...");
                 backupCountdown = 2;
             } else if (backupSwitchedOff) {
-                say(player, "Quick save is not enabled - see Settings");
+                say(player, "Not enabled - see Settings");
                 System.out.println("[quicksave] pressed while the backup feature is off");
             } else {
-                saving = true;
-                long startedAt = System.currentTimeMillis();
-                save.invoke(null, Boolean.TRUE);
-                System.out.println("[quicksave] saved in " + (System.currentTimeMillis() - startedAt) + " ms");
-                say(player, "Game saved");
+                // Build 41, an older launcher, or multiplayer with the backup armed. The plain
+                // save(true) that used to live here is gone on purpose: the game streams the world
+                // to disk anyway, so after a kill it resumes near where it died and "Game saved"
+                // looked like a working checkpoint - it misled her, a tester and us before that was
+                // understood. F10 now never claims more than it holds.
+                say(player, "Not available");
+                System.out.println("[quicksave] pressed where the backup is not available");
             }
         } catch (Throwable t) {
             // The key array is indexed without a bounds check, so a build whose key codes are the
@@ -184,7 +186,7 @@ public class QuickSave {
                 if (System.currentTimeMillis() - waitStart > STREAMER_WAIT_MS) {
                     System.out.println("[quicksave] backup skipped: world streamer still busy after "
                             + STREAMER_WAIT_MS + " ms");
-                    say(player, "Game saved, backup skipped");
+                    say(player, "Backup skipped");
                     return;
                 }
                 Thread.sleep(25);
@@ -199,7 +201,7 @@ public class QuickSave {
             worldRoot.mkdirs();
             if (worldRoot.getUsableSpace() < need) {
                 System.out.println("[quicksave] backup failed: need " + (need >> 20) + " MB free");
-                say(player, "Game saved, backup failed: not enough space");
+                say(player, "Backup failed: no space");
                 return;
             }
 
@@ -231,7 +233,7 @@ public class QuickSave {
         } catch (Throwable t) {
             // By this point save(true) has already succeeded - say exactly that much.
             System.out.println("[quicksave] backup failed: " + rootCause(t));
-            say(player, "Game saved, but backup failed");
+            say(player, "Backup failed");
         } finally {
             saving = false;
         }
