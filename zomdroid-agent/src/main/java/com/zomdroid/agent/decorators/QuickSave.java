@@ -72,6 +72,15 @@ public class QuickSave {
     /** Set by the launcher only when the user enabled backups AND the instance is Build 42. */
     private static final String backupRoot = System.getProperty("zomdroid.backup.dir");
 
+    /**
+     * "off" when the launcher knows the feature exists for this instance and the user has it
+     * disabled. F10 then tells them so instead of silently doing a plain save - a plain save
+     * resumes convincingly after a kill (the game streams the world anyway), which is exactly how
+     * it was mistaken for a working checkpoint, twice, by different people. No property at all
+     * means Build 41 or an older launcher, where the plain save stays: no backup was ever on offer.
+     */
+    private static final boolean backupSwitchedOff = "off".equals(System.getProperty("zomdroid.backup"));
+
     private static boolean backupResolved;
     private static boolean backupDisabled;
     private static Method manipulateSavefile; // LuaManager$GlobalObject#manipulateSavefile(String, String)
@@ -121,6 +130,9 @@ public class QuickSave {
             if (backupRoot != null && backupAvailable()) {
                 say(player, "Backup...");
                 backupCountdown = 2;
+            } else if (backupSwitchedOff) {
+                say(player, "Quick save is not enabled - see Settings");
+                System.out.println("[quicksave] pressed while the backup feature is off");
             } else {
                 saving = true;
                 long startedAt = System.currentTimeMillis();
