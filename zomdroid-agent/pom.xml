@@ -31,9 +31,30 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <manifestEntries>
                                         <Agent-Class>com.zomdroid.agent.Main</Agent-Class>
-                                        <Premain-Class>com.zomdroid.agent.Main</Premain-Class>>
+                                        <Premain-Class>com.zomdroid.agent.Main</Premain-Class>
                                         <Can-Redefine-Classes>true</Can-Redefine-Classes>
                                         <Can-Retransform-Classes>true</Can-Retransform-Classes>
+                                        <!--
+                                          Byte Buddy is a multi-release jar and shade copies its
+                                          META-INF/versions tree into ours - 2946 entries for Java 9+
+                                          and 25 for Java 24+ - but writes a fresh manifest without
+                                          this attribute, and without it the JVM does not look in
+                                          that directory at all. So the whole tree sat in the jar as
+                                          dead weight while we ran Byte Buddy's Java 8 classes on
+                                          Java 25.
+
+                                          On Java 24+ Byte Buddy reads classes through the JDK
+                                          Class-File API rather than its own ASM, and that bridge
+                                          (net.bytebuddy.jar.asmjdkbridge) exists ONLY under
+                                          versions/24. Invisible, it threw "Type not available on
+                                          current VM: JdkClassReader" and no hook was installed -
+                                          which is how quick save shipped as a dead button.
+
+                                          Not optional on Build 42.20: its own classes are major
+                                          version 69, and the bundled ASM tops out at 68, so forcing
+                                          ASM_ONLY instead is not a way out.
+                                        -->
+                                        <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
