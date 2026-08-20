@@ -706,7 +706,7 @@ new file mode 100644
 index 00000000..abecf724
 --- /dev/null
 +++ b/src/gl/uniform_init_parser.h
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,188 @@
 +#ifndef UNIFORM_INIT_PARSER_H
 +#define UNIFORM_INIT_PARSER_H
 +#include <ctype.h>
@@ -735,31 +735,40 @@ index 00000000..abecf724
 +    return 0;
 +}
 +
-+static int parse_float_list(const char* expr, float* out, int count) {
++// Reads the component list of a constructor expression into `out`, at most `max` of them.
++// Returns how many were read, or -1 if the expression is malformed or not something we are
++// willing to interpret. Nested constructors and identifiers - vec4(vec3(1,2,3), 1.0) or
++// vec4(SomeConst, 1.0) - are refused rather than guessed at: reading them means resolving names,
++// and a silently wrong uniform is worse than one we admit we could not read.
++static int parse_float_components(const char* expr, float* out, int max) {
 +    const char* p = strchr(expr, '(');
-+    if (!p) return 0;
++    if (!p) return -1;
 +    p++; // skip '('
 +
 +    int parsed = 0;
-+    while (parsed < count) {
++    while (1) {
 +        while (isspace(*p)) p++;
++        if (*p == ')') break;
++        if (*p == '\0') return -1;
++        if (parsed >= max) return -1;
 +
 +        // Find next token boundary (comma, space, or ')')
 +        const char* token_end = p;
 +        while (*token_end && *token_end != ',' && *token_end != ')' && !isspace(*token_end)) {
++            if (*token_end == '(') return -1; // nested constructor
 +            token_end++;
 +        }
 +
 +        // Extract token substring
 +        size_t token_len = token_end - p;
-+        if (token_len == 0) return 0;
++        if (token_len == 0) return -1;
 +
 +        char token[64];
-+        if (token_len >= sizeof(token)) return 0;
++        if (token_len >= sizeof(token)) return -1;
 +        memcpy(token, p, token_len);
 +        token[token_len] = '\0';
 +
-+        if (!parse_float(token, &out[parsed])) return 0;
++        if (!parse_float(token, &out[parsed])) return -1;
 +
 +        parsed++;
 +        p = token_end;
@@ -767,19 +776,21 @@ index 00000000..abecf724
 +        // Skip commas and whitespace
 +        while (*p == ',' || isspace(*p)) p++;
 +    }
-+
-+    while (isspace(*p)) p++;
-+    return *p == ')' && parsed == count;
++    return parsed;
 +}
 +
-+static int parse_int_list(const char* expr, int* out, int count) {
++// The same, for integer and boolean vectors, where "true"/"false" are components too.
++static int parse_int_components(const char* expr, int* out, int max) {
 +    const char* p = strchr(expr, '(');
-+    if (!p) return 0;
++    if (!p) return -1;
 +    p++; // skip '('
 +
 +    int parsed = 0;
-+    while (parsed < count) {
++    while (1) {
 +        while (isspace(*p)) p++;
++        if (*p == ')') break;
++        if (*p == '\0') return -1;
++        if (parsed >= max) return -1;
 +
 +        // Handle "true"/"false" explicitly for booleans
 +        if (strncmp(p, "true", 4) == 0 && (p[4] == ',' || isspace(p[4]) || p[4] == ')')) {
@@ -792,18 +803,19 @@ index 00000000..abecf724
 +            // Find next token boundary
 +            const char* token_end = p;
 +            while (*token_end && *token_end != ',' && *token_end != ')' && !isspace(*token_end)) {
++                if (*token_end == '(') return -1; // nested constructor
 +                token_end++;
 +            }
 +
 +            size_t token_len = token_end - p;
-+            if (token_len == 0) return 0;
++            if (token_len == 0) return -1;
 +
 +            char token[64];
-+            if (token_len >= sizeof(token)) return 0;
++            if (token_len >= sizeof(token)) return -1;
 +            memcpy(token, p, token_len);
 +            token[token_len] = '\0';
 +
-+            if (!parse_int(token, &out[parsed])) return 0;
++            if (!parse_int(token, &out[parsed])) return -1;
 +
 +            parsed++;
 +            p = token_end;
@@ -812,25 +824,74 @@ index 00000000..abecf724
 +        // Skip commas and whitespace
 +        while (*p == ',' || isspace(*p)) p++;
 +    }
-+
-+    while (isspace(*p)) p++;
-+    return *p == ')' && parsed == count;
++    return parsed;
 +}
 +
-+static int parse_bvec2(const char* expr, int out[2])  { return parse_int_list(expr, out, 2); }
-+static int parse_bvec3(const char* expr, int out[3])  { return parse_int_list(expr, out, 3); }
-+static int parse_bvec4(const char* expr, int out[4])  { return parse_int_list(expr, out, 4); }
++// GLSL builds a vector from a single scalar: vec3(1.0) means vec3(1.0, 1.0, 1.0). Demanding the
++// full component count rejected exactly that, and a rejected initializer leaves the uniform at
++// GL's default of zero - which is how a mod vehicle shader's "uniform vec3 TintColour = vec3(1.0)"
++// (white, i.e. no tint) came out black on Build 41.
++static int parse_vecN(const char* expr, float* out, int count) {
++    float comp[16];
++    int n = parse_float_components(expr, comp, count);
++    if (n == count) {
++        for (int i = 0; i < count; i++) out[i] = comp[i];
++        return 1;
++    }
++    if (n == 1) {
++        for (int i = 0; i < count; i++) out[i] = comp[0];
++        return 1;
++    }
++    return 0;
++}
 +
-+static int parse_ivec2(const char* expr, int out[2])  { return parse_int_list(expr, out, 2); }
-+static int parse_ivec3(const char* expr, int out[3])  { return parse_int_list(expr, out, 3); }
-+static int parse_ivec4(const char* expr, int out[4])  { return parse_int_list(expr, out, 4); }
++static int parse_ivecN(const char* expr, int* out, int count) {
++    int comp[16];
++    int n = parse_int_components(expr, comp, count);
++    if (n == count) {
++        for (int i = 0; i < count; i++) out[i] = comp[i];
++        return 1;
++    }
++    if (n == 1) {
++        for (int i = 0; i < count; i++) out[i] = comp[0];
++        return 1;
++    }
++    return 0;
++}
 +
-+static int parse_vec2(const char* expr, float out[2])  { return parse_float_list(expr, out, 2); }
-+static int parse_vec3(const char* expr, float out[3])  { return parse_float_list(expr, out, 3); }
-+static int parse_vec4(const char* expr, float out[4])  { return parse_float_list(expr, out, 4); }
++// A matrix from one scalar is NOT that scalar repeated: mat4(1.0) is the identity matrix, zero
++// off the diagonal. Broadcasting it the way a vector broadcasts would compile, run, and be
++// quietly wrong, so the diagonal case is spelled out.
++static int parse_matN(const char* expr, float* out, int dim) {
++    int count = dim * dim;
++    float comp[16];
++    int n = parse_float_components(expr, comp, count);
++    if (n == count) {
++        for (int i = 0; i < count; i++) out[i] = comp[i];
++        return 1;
++    }
++    if (n == 1) {
++        for (int i = 0; i < count; i++) out[i] = 0.0f;
++        for (int i = 0; i < dim; i++) out[i * dim + i] = comp[0];
++        return 1;
++    }
++    return 0;
++}
 +
-+static int parse_mat2(const char* expr, float out[4])   { return parse_float_list(expr, out, 4); }
-+static int parse_mat3(const char* expr, float out[9])   { return parse_float_list(expr, out, 9); }
-+static int parse_mat4(const char* expr, float out[16])  { return parse_float_list(expr, out, 16); }
++static int parse_bvec2(const char* expr, int out[2])  { return parse_ivecN(expr, out, 2); }
++static int parse_bvec3(const char* expr, int out[3])  { return parse_ivecN(expr, out, 3); }
++static int parse_bvec4(const char* expr, int out[4])  { return parse_ivecN(expr, out, 4); }
++
++static int parse_ivec2(const char* expr, int out[2])  { return parse_ivecN(expr, out, 2); }
++static int parse_ivec3(const char* expr, int out[3])  { return parse_ivecN(expr, out, 3); }
++static int parse_ivec4(const char* expr, int out[4])  { return parse_ivecN(expr, out, 4); }
++
++static int parse_vec2(const char* expr, float out[2])  { return parse_vecN(expr, out, 2); }
++static int parse_vec3(const char* expr, float out[3])  { return parse_vecN(expr, out, 3); }
++static int parse_vec4(const char* expr, float out[4])  { return parse_vecN(expr, out, 4); }
++
++static int parse_mat2(const char* expr, float out[4])   { return parse_matN(expr, out, 2); }
++static int parse_mat3(const char* expr, float out[9])   { return parse_matN(expr, out, 3); }
++static int parse_mat4(const char* expr, float out[16])  { return parse_matN(expr, out, 4); }
 +
 +#endif //UNIFORM_INIT_PARSER_H
