@@ -1,0 +1,40 @@
+diff --git a/code/AssetLib/FBX/FBXConverter.cpp b/code/AssetLib/FBX/FBXConverter.cpp
+index fd54c63..562282c 100644
+--- a/code/AssetLib/FBX/FBXConverter.cpp
++++ b/code/AssetLib/FBX/FBXConverter.cpp
+@@ -1651,7 +1651,7 @@ void FBXConverter::ConvertWeights(aiMesh *out, const MeshGeometry &geo, const ai
+ 
+ void FBXConverter::ConvertCluster(std::vector<aiBone*> &local_mesh_bones, const Cluster *cluster,
+         std::vector<size_t> &out_indices, std::vector<size_t> &index_out_indices,
+-        std::vector<size_t> &count_out_indices, const aiMatrix4x4 &absolute_transform,
++        std::vector<size_t> &count_out_indices, const aiMatrix4x4 & /* absolute_transform*/,
+         aiNode *) {
+     ai_assert(cluster != nullptr); // make sure cluster valid
+ 
+@@ -1668,16 +1668,23 @@ void FBXConverter::ConvertCluster(std::vector<aiBone*> &local_mesh_bones, const
+         bone = new aiBone();
+         bone->mName = bone_name;
+ 
+-        //bone->mOffsetMatrix = cluster->Transform();
++        // ZOMDROID: PZ compatibility revert of assimp commit 384db868 (first shipped in v5.4.0).
++        // Project Zomboid's content and its own jassimp builds (5.0.1 linux, 5.3.1 ARM64) expect
++        // the pre-5.4 offset-matrix semantics; with the 5.4 formula part of the bind transform is
++        // counted twice for PZ's skinned FBX parts (mod vehicle hoods, hairstyles). This restores
++        // the v5.3.1 code verbatim. Not an assimp bug fix - upstream changed this deliberately
++        // (issue #5132); it is PZ that is authored against the old semantics.
++        bone->mOffsetMatrix = cluster->Transform();
+         // store local transform link for post processing
+-        
++        /*
+         bone->mOffsetMatrix = cluster->TransformLink();
+         bone->mOffsetMatrix.Inverse();
+ 
+         const aiMatrix4x4 matrix = (aiMatrix4x4)absolute_transform;
+ 
+         bone->mOffsetMatrix = bone->mOffsetMatrix * matrix; // * mesh_offset
+-        
++        */
++
+         //
+         // Now calculate the aiVertexWeights
+         //
