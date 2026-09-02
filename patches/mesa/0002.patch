@@ -65,10 +65,10 @@ index 0a728a1..e3ec5d4 100644
  
 diff --git a/src/mesa/main/zomdroid_etc2.c b/src/mesa/main/zomdroid_etc2.c
 new file mode 100644
-index 0000000..cd3f5ce
+index 0000000..725a0a9
 --- /dev/null
 +++ b/src/mesa/main/zomdroid_etc2.c
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,518 @@
 +// ZOMDROID ETC2 -- verbatim copy of NG_GL4ES's src/gl/zomdroid_etc2.c (RC48), which was itself
 +// ported 2026-08-31 from our own RimDroid fork, rd_etc2.c -- same author,
 +// no license concerns). CPU encoder: RGBA8/RGB8 pixels in, ETC2 blocks out. ETC1-subset
@@ -264,6 +264,119 @@ index 0000000..cd3f5ce
 +    }
 +}
 +
++/* ---------------------------------------------------------------------------
++ * Parallel block encoding (2026-09-02). Blocks are independent, so the first run's
++ * 50 seconds of encoding (measured: 6150 textures, 49.5 s on a Snapdragon 8 Elite)
++ * splits across cores with no change to the output: every block is encoded by the
++ * same function from the same pixels, only the block ROW is handed out by an atomic
++ * counter. A persistent pool of workers waits on a condition variable between
++ * textures -- creating threads per texture would cost more than it saves on the
++ * thousands of small mip levels -- and small images (fewer than ZETC2_PAR_MIN_BLOCKS
++ * blocks) are encoded on the calling thread alone. ZOMDROID_ETC2_THREADS overrides
++ * the thread count; 1 disables the pool.
++ * --------------------------------------------------------------------------- */
++#include <pthread.h>
++#include <stdatomic.h>
++#include <unistd.h>
++
++#define ZETC2_PAR_MIN_BLOCKS 1024   /* ~128x128: below this the hand-off is not worth it */
++#define ZETC2_MAX_THREADS    16
++
++typedef struct {
++    const uint8_t* rgba; int w, h, stride, bw, bh, bs, alpha; uint8_t* out;
++} zetc2_job_t;
++
++static void zetc2_encode_rows(const zetc2_job_t* j, atomic_int* next_row) {
++    for (;;) {
++        int by = atomic_fetch_add(next_row, 1);
++        if (by >= j->bh) return;
++        for (int bx = 0; bx < j->bw; bx++) {
++            uint8_t px[16][3], al[16];
++            for (int p = 0; p < 16; p++) {                   /* col-major p = x*4+y, edge clamp */
++                int x = bx * 4 + (p >> 2), y = by * 4 + (p & 3);
++                if (x >= j->w) x = j->w - 1;
++                if (y >= j->h) y = j->h - 1;
++                const uint8_t* s = j->rgba + ((size_t)y * j->w + x) * j->stride;
++                px[p][0] = s[0]; px[p][1] = s[1]; px[p][2] = s[2];
++                al[p] = (j->stride == 4) ? s[3] : 255;
++            }
++            uint8_t* o = j->out + ((size_t)by * j->bw + bx) * j->bs;
++            if (j->alpha) { zetc2_eac_encode_block(al, o); zetc2_etc1_encode_block(px, o + 8); }
++            else zetc2_etc1_encode_block(px, o);
++        }
++    }
++}
++
++/* Pool state. One job at a time: the encoder is called from the GL thread only. */
++static pthread_mutex_t zetc2_pool_mu = PTHREAD_MUTEX_INITIALIZER;
++static pthread_cond_t  zetc2_pool_cv = PTHREAD_COND_INITIALIZER;   /* workers wait here */
++static pthread_cond_t  zetc2_done_cv = PTHREAD_COND_INITIALIZER;   /* caller waits here */
++static int zetc2_workers = -1;           /* -1 = not initialised, 0 = serial */
++static unsigned zetc2_generation = 0;    /* bumped per job; workers wake on change */
++static int zetc2_busy = 0;               /* workers still inside the current job */
++static const zetc2_job_t* zetc2_cur_job = NULL;
++static atomic_int zetc2_cur_row;
++
++static void* zetc2_worker(void* arg) {
++    (void)arg;
++    unsigned seen = 0;
++    pthread_mutex_lock(&zetc2_pool_mu);
++    for (;;) {
++        while (zetc2_generation == seen) pthread_cond_wait(&zetc2_pool_cv, &zetc2_pool_mu);
++        seen = zetc2_generation;
++        const zetc2_job_t* j = zetc2_cur_job;
++        pthread_mutex_unlock(&zetc2_pool_mu);
++        if (j) zetc2_encode_rows(j, &zetc2_cur_row);
++        pthread_mutex_lock(&zetc2_pool_mu);
++        if (--zetc2_busy == 0) pthread_cond_signal(&zetc2_done_cv);
++    }
++    return NULL;
++}
++
++static int zetc2_pool_size(void) {
++    if (zetc2_workers >= 0) return zetc2_workers;
++    int n = 0;
++    const char* e = getenv("ZOMDROID_ETC2_THREADS");
++    if (e && e[0]) n = atoi(e);
++    if (n <= 0) {
++        long c = sysconf(_SC_NPROCESSORS_ONLN);
++        n = (c > 1) ? (int)c : 1;
++    }
++    if (n > ZETC2_MAX_THREADS) n = ZETC2_MAX_THREADS;
++    int workers = n - 1;                 /* the caller is one of the encoders */
++    int started = 0;
++    for (int i = 0; i < workers; i++) {
++        pthread_t t;
++        pthread_attr_t a;
++        pthread_attr_init(&a);
++        pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
++        if (pthread_create(&t, &a, zetc2_worker, NULL) == 0) started++;
++        pthread_attr_destroy(&a);
++    }
++    zetc2_workers = started;
++    return started;
++}
++
++static void zetc2_encode_parallel(const zetc2_job_t* j) {
++    int workers = ((size_t)j->bw * j->bh >= ZETC2_PAR_MIN_BLOCKS) ? zetc2_pool_size() : 0;
++    atomic_store(&zetc2_cur_row, 0);
++    if (workers > 0) {
++        pthread_mutex_lock(&zetc2_pool_mu);
++        zetc2_cur_job = j;
++        zetc2_busy = workers;
++        zetc2_generation++;
++        pthread_cond_broadcast(&zetc2_pool_cv);
++        pthread_mutex_unlock(&zetc2_pool_mu);
++    }
++    zetc2_encode_rows(j, &zetc2_cur_row);   /* the caller works too */
++    if (workers > 0) {
++        pthread_mutex_lock(&zetc2_pool_mu);
++        while (zetc2_busy > 0) pthread_cond_wait(&zetc2_done_cv, &zetc2_pool_mu);
++        zetc2_cur_job = NULL;
++        pthread_mutex_unlock(&zetc2_pool_mu);
++    }
++}
++
 +const void* zomdroid_etc2_encode(uint32_t etc2fmt, int32_t w, int32_t h, const uint8_t* rgba, int stride,
 +                                 size_t* out_sz) {
 +    struct timespec t0, t1;
@@ -275,20 +388,8 @@ index 0000000..cd3f5ce
 +    size_t need = (size_t)bw * bh * bs;
 +    if (!need || need > (128u << 20)) return NULL;
 +    if (ecap < need) { void* nb = realloc(ebuf, need); if (!nb) return NULL; ebuf = (uint8_t*)nb; ecap = need; }
-+    for (int by = 0; by < bh; by++) for (int bx = 0; bx < bw; bx++) {
-+        uint8_t px[16][3], al[16];
-+        for (int p = 0; p < 16; p++) {                       /* col-major p = x*4+y, edge clamp */
-+            int x = bx * 4 + (p >> 2), y = by * 4 + (p & 3);
-+            if (x >= w) x = w - 1;
-+            if (y >= h) y = h - 1;
-+            const uint8_t* s = rgba + ((size_t)y * w + x) * stride;
-+            px[p][0] = s[0]; px[p][1] = s[1]; px[p][2] = s[2];
-+            al[p] = (stride == 4) ? s[3] : 255;
-+        }
-+        uint8_t* o = ebuf + ((size_t)by * bw + bx) * bs;
-+        if (alpha) { zetc2_eac_encode_block(al, o); zetc2_etc1_encode_block(px, o + 8); }
-+        else zetc2_etc1_encode_block(px, o);
-+    }
++    zetc2_job_t job = { rgba, w, h, stride, bw, bh, bs, alpha, ebuf };
++    zetc2_encode_parallel(&job);
 +    *out_sz = need;
 +    zomdroid_etc2_n++;
 +    clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -414,6 +515,12 @@ index 0000000..cd3f5ce
 +    }
 +    if (dir_ok < 0) dir_ok = (mkdir(dir, 0700) == 0 || errno == EEXIST) ? 1 : 0;
 +    if (!dir_ok) return zomdroid_etc2_encode(etc2fmt, w, h, rgba, stride, out_sz);
++    // Small levels skip the disk. A mip chain is encoded whole because its format may not
++    // mix, so the tails come through here too: on one session 2628 of 6151 cache files were
++    // under a kilobyte (32x32 and below), each costing a hash, an open, a read and an mtime
++    // touch for a texture that encodes in microseconds. Measured cost of the cache was 8.5 s
++    // of I/O per session against 0.26 s of encoding; this is where most of it went.
++    if (w <= 64 && h <= 64) return zomdroid_etc2_encode(etc2fmt, w, h, rgba, stride, out_sz);
 +
 +    struct timespec t0, t1;
 +    clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -435,9 +542,14 @@ index 0000000..cd3f5ce
 +                }
 +            }
 +            if (lcap >= hdr[3] && fread(lbuf, 1, hdr[3], f) == hdr[3]) {
++                // LRU: a hit makes the file young again -- but not on every hit. Touching
++                // the mtime is a metadata write, and a session hits ~6000 files; eviction
++                // only cares about days, so a file touched within the last day is left alone.
++                struct stat fst;
++                int stale = fstat(fileno(f), &fst) != 0 || (time(NULL) - fst.st_mtime) > 86400;
 +                fclose(f);
 +                zomdroid_etc2_hits++;
-+                utimensat(AT_FDCWD, path, NULL, 0); // LRU: a hit makes the file young again
++                if (stale) utimensat(AT_FDCWD, path, NULL, 0);
 +                *out_sz = hdr[3];
 +                clock_gettime(CLOCK_MONOTONIC, &t1);
 +                zetc2_io_ns += (uint64_t)(t1.tv_sec - t0.tv_sec) * 1000000000u + (uint64_t)(t1.tv_nsec - t0.tv_nsec);
