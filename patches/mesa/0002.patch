@@ -499,10 +499,10 @@ index 0000000..b6a3bca
 +#endif
 diff --git a/src/mesa/main/zomdroid_texetc2.c b/src/mesa/main/zomdroid_texetc2.c
 new file mode 100644
-index 0000000..77ef44b
+index 0000000..6a6147d
 --- /dev/null
 +++ b/src/mesa/main/zomdroid_texetc2.c
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,329 @@
 +/*
 + * ZOMDROID: ETC2 compression of large RGBA8 texture uploads, at full resolution.
 + *
@@ -617,16 +617,37 @@ index 0000000..77ef44b
 +   return true;
 +}
 +
-+/* The internal formats we are willing to re-describe: plain 8-bit (or unsized) RGB/RGBA.
-+ * sRGB, integer, float, half-float, packed and compressed requests are somebody else's. */
++/* GL_COMPRESSED_RGBA / GL_COMPRESSED_RGB: "compress this, I do not care how". */
++#define ZETC2_GL_COMPRESSED_RGB    0x84ED
++#define ZETC2_GL_COMPRESSED_RGBA   0x84EE
++
++/* The internal formats we are willing to re-describe: plain 8-bit (or unsized) RGB/RGBA, and
++ * the two GENERIC compressed requests. The generic ones matter more than they look: Project
++ * Zomboid ships with textureCompression=true, and on a GL 4.6 context (where
++ * GL_ARB_texture_compression is advertised) every texture built without asset params -- that
++ * is every .pack atlas page and every streamed world sheet -- is uploaded as GL_COMPRESSED_RGBA.
++ * Mesa answers that with DXT5 and a software encode on every upload, no cache; NG_GL4ES sees
++ * the same textures as plain GL_RGBA because gl4es does not advertise the extension. Treating
++ * the generic request as "ETC2 please" is what puts ZINK on the same footing. Specific
++ * compressed enums (S3TC, ETC2, ASTC by name), sRGB, integer, float, half-float and packed
++ * requests are still somebody else's. */
 +static bool
-+zetc2_internal_ok(GLint internalFormat, int *out_channels)
++zetc2_internal_ok(GLint internalFormat, int *out_channels, bool *out_generic_compressed)
 +{
++   *out_generic_compressed = false;
 +   switch (internalFormat) {
++   case ZETC2_GL_COMPRESSED_RGBA:
++      *out_generic_compressed = true;
++      *out_channels = 4;
++      return true;
 +   case GL_RGBA:
 +   case GL_RGBA8:
 +   case 4:
 +      *out_channels = 4;
++      return true;
++   case ZETC2_GL_COMPRESSED_RGB:
++      *out_generic_compressed = true;
++      *out_channels = 3;
 +      return true;
 +   case GL_RGB:
 +   case GL_RGB8:
@@ -684,6 +705,7 @@ index 0000000..77ef44b
 +   struct st_context *st = st_context(ctx);
 +   struct gl_texture_object *texObj = texImage->TexObject;
 +   int channels;
++   bool generic_compressed;
 +
 +   texImage->zomdroid_etc2 = ZETC2_MARK_NONE;
 +
@@ -697,10 +719,13 @@ index 0000000..77ef44b
 +      return false;
 +   if (type != GL_UNSIGNED_BYTE || (format != GL_RGBA && format != GL_RGB))
 +      return false;
-+   if (!zetc2_internal_ok(internalFormat, &channels))
++   if (!zetc2_internal_ok(internalFormat, &channels, &generic_compressed))
 +      return false;
-+   if (_mesa_is_format_compressed(texImage->TexFormat))
-+      return false; /* the application asked for compression itself; not ours */
++   /* A compressed TexFormat means Mesa already chose one (DXT5 for the generic request). For
++    * the generic request that choice is ours to override; for anything else it is the
++    * application's business. */
++   if (_mesa_is_format_compressed(texImage->TexFormat) && !generic_compressed)
++      return false;
 +   /* Legacy automatic mipmap generation would run Mesa's software generator on our
 +    * compressed levels, which lands on the same empty texstore. Leave those alone. */
 +   if (texObj->Attrib.GenerateMipmap)
