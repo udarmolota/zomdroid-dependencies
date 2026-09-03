@@ -69,7 +69,7 @@ public class QuickSave {
 
     // -------------------- backup state --------------------
 
-    /** Set by the launcher only when the user enabled backups AND the instance is Build 42. */
+    /** Set by the launcher only when the user enabled backups for this instance. */
     private static final String backupRoot = System.getProperty("zomdroid.backup.dir");
 
     /**
@@ -263,7 +263,16 @@ public class QuickSave {
             Class<?> zfsClass = Class.forName("zombie.ZomboidFileSystem", false, cl);
             zfs = zfsClass.getField("instance").get(null);
             getCurrentSaveDir = zfsClass.getMethod("getCurrentSaveDir");
-            gameClientIsClient = Class.forName("zombie.network.GameClient", false, cl).getField("client");
+            // The multiplayer flag: a public static boolean either way, but Build 42 calls it
+            // "client" and Build 41 "bClient". Every other member of this sequence was verified
+            // identical in 41.78.16 and 42.20 (2026-09-03, classes read off the device), so this
+            // rename is the whole difference between the two builds.
+            Class<?> gameClient = Class.forName("zombie.network.GameClient", false, cl);
+            try {
+                gameClientIsClient = gameClient.getField("client");
+            } catch (NoSuchFieldException b42Absent) {
+                gameClientIsClient = gameClient.getField("bClient");
+            }
             Class<?> vdb = Class.forName("zombie.vehicles.VehiclesDB2", false, cl);
             vehiclesDb = vdb.getField("instance").get(null);
             vdbSetForceSave = vdb.getMethod("setForceSave");
