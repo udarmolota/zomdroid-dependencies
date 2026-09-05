@@ -1,0 +1,64 @@
+diff --git a/src/gl/framebuffers.c b/src/gl/framebuffers.c
+index 5220d29..28d03dd 100644
+--- a/src/gl/framebuffers.c
++++ b/src/gl/framebuffers.c
+@@ -986,8 +986,21 @@ void APIENTRY_GL4ES gl4es_glRenderbufferStorage(GLenum target, GLenum internalfo
+     // check if internal format is GL_DEPTH_STENCIL_EXT
+     if (internalformat == GL_DEPTH_STENCIL)
+         internalformat = GL_DEPTH24_STENCIL8;
++    // Old PowerVR drivers need the split fallback even when they advertise the packed format.
++    // B-Series does not: splitting a packed buffer into separate depth/stencil attachments makes
++    // its driver reject PZ B41's character-combiner FBO with GL_FRAMEBUFFER_UNSUPPORTED.
++    const int split_imgtec_depthstencil =
++        ((hardext.vendor & VEND_IMGTEC) == VEND_IMGTEC) && !hardext.imgtec_bseries;
++    if (internalformat == GL_DEPTH24_STENCIL8 && hardext.imgtec_bseries && hardext.depthstencil) {
++        static int packed_bseries_logged = 0;
++        if (!packed_bseries_logged) {
++            SHUT_LOGD("PowerVR B-Series: keeping packed GL_DEPTH24_STENCIL8 renderbuffers\n");
++            packed_bseries_logged = 1;
++        }
++    }
+     // in that case, create first a STENCIL one then a DEPTH one....
+-    if ((internalformat == GL_DEPTH24_STENCIL8 && (hardext.depthstencil==0 || ((hardext.vendor&VEND_IMGTEC)==VEND_IMGTEC)))) {
++    if (internalformat == GL_DEPTH24_STENCIL8 &&
++        (hardext.depthstencil == 0 || split_imgtec_depthstencil)) {
+         internalformat = (hardext.depth24)?GL_DEPTH_COMPONENT24:GL_DEPTH_COMPONENT16;
+         // create a stencil buffer if needed
+         if(!rend->secondarybuffer) {
+diff --git a/src/glx/hardext.c b/src/glx/hardext.c
+index 46e35bb..d0c762e 100644
+--- a/src/glx/hardext.c
++++ b/src/glx/hardext.c
+@@ -419,11 +419,17 @@ void GetHardwareExtensions(int notest)
+     SHUT_LOGD("Max Color Attachments: %d / Draw buffers: %d\n", hardext.maxdrawbuffers, hardext.maxcolorattach);
+     // get GLES driver signatures...
+     const char *vendor = (const char *) gles_glGetString(GL_VENDOR);
+-    SHUT_LOGD("Hardware vendor is %s\n", vendor);
+-    if(strstr(vendor, "ARM"))
++    const char *renderer = (const char *) gles_glGetString(GL_RENDERER);
++    SHUT_LOGD("Hardware vendor is %s\n", vendor ? vendor : "unknown");
++    SHUT_LOGD("Hardware renderer is %s\n", renderer ? renderer : "unknown");
++    if(vendor && strstr(vendor, "ARM"))
+         hardext.vendor = VEND_ARM;
+-    else if(strstr(vendor, "Imagination Technologies"))
++    else if(vendor && strstr(vendor, "Imagination Technologies"))
+         hardext.vendor = VEND_IMGTEC;
++    if(renderer && (strstr(renderer, "PowerVR B-Series") || strstr(renderer, "BXM-"))) {
++        hardext.imgtec_bseries = 1;
++        SHUT_LOGD("PowerVR B-Series packed depth/stencil path enabled\n");
++    }
+     if(hardext.esversion>1) {
+         if(testGLSL("#version 120", 1))
+             hardext.glsl120 = 1;
+diff --git a/src/glx/hardext.h b/src/glx/hardext.h
+index f579bc5..c8a5470 100644
+--- a/src/glx/hardext.h
++++ b/src/glx/hardext.h
+@@ -64,6 +64,7 @@ typedef struct _hardext {
+     int khr_texture_2d; // EGL_KHR_gl_texture_2D_image
+     int khr_renderbuffer; // EGL_KHR_gl_renderbuffer_image
+     int vendor;         // which vendor (to apply workaround)
++    int imgtec_bseries; // modern PowerVR B-Series: packed depth/stencil should stay packed
+     int eglnoalpha;     // EGL surface doesn't seems to have any alpha channel (auto detect)
+     int prgbinary;      // GL_OES_get_program extension
+     int prgbin_n;       // number of program binary format support
