@@ -1,0 +1,78 @@
+diff --git a/src/gl/program.c b/src/gl/program.c
+index dbe5a86..31af734 100644
+--- a/src/gl/program.c
++++ b/src/gl/program.c
+@@ -10,6 +10,7 @@
+ #include "loader.h"
+ #include "shaderconv.h"
+ #include "fpe_shader.h"
++#include "pz_skinattrib.h"
+ 
+ #include "uniform_init_parser.h"
+ 
+@@ -861,6 +862,15 @@ void APIENTRY_GL4ES gl4es_glLinkProgram(GLuint program) {
+     CHECK_PROGRAM(void, program)
+     noerrorShim();
+ 
++    /* Save bindings before clear_program discards the query cache. */
++    int pz_indices_bound = 0, pz_weights_bound = 0, pz_slot6_used = 0, pz_slot7_used = 0;
++    attribloc_t *pz_a;
++    kh_foreach_value(glprogram->attribloc, pz_a,
++        if(pz_a->name && !strcmp(pz_a->name, "boneIndices")) pz_indices_bound = 1;
++        if(pz_a->name && !strcmp(pz_a->name, "boneWeights")) pz_weights_bound = 1;
++        if(pz_a->index == 6) pz_slot6_used = 1;
++        if(pz_a->index == 7) pz_slot7_used = 1;
++    );
+     clear_program(glprogram);
+ 
+     // check if attached shaders are compatible in term of varying...
+@@ -909,6 +919,21 @@ void APIENTRY_GL4ES gl4es_glLinkProgram(GLuint program) {
+             if(attribute)
+                 gl4es_glBindAttribLocation(glprogram->id, i, attribute);
+         }
++    /* PZ B41: keep generic skinning arrays out of conventional colour/UV
++     * storage. Otherwise driver-assigned locations can overwrite state used
++     * by the UI even though that conventional input is inactive here.
++     * Honour application bindings and retain the old path on small hardware.
++     */
++    if(glprogram->last_vert) {
++        const char *opt = getenv("LIBGL_PZ_SKINATTRIB");
++        if((!opt || atoi(opt)) && pz_skinattrib_eligible(
++                glprogram->last_vert->source, hardext.maxvattrib,
++                pz_indices_bound, pz_weights_bound, pz_slot6_used, pz_slot7_used)) {
++            gl4es_glBindAttribLocation(glprogram->id, 6, "boneIndices");
++            gl4es_glBindAttribLocation(glprogram->id, 7, "boneWeights");
++            printf("LIBGL: PZ skin attributes program=%u indices=6 weights=7\n", glprogram->id);
++        }
++    }
+     // ok, continue with linking
+     LOAD_GLES2(glLinkProgram);
+     if(gles_glLinkProgram) {
+diff --git b/src/gl/pz_skinattrib.h b/src/gl/pz_skinattrib.h
+new file mode 100644
+index 0000000..472cfe5
+--- /dev/null
++++ b/src/gl/pz_skinattrib.h
+@@ -0,0 +1,22 @@
++#ifndef ZOMDROID_PZ_SKINATTRIB_H
++#define ZOMDROID_PZ_SKINATTRIB_H
++
++#include <string.h>
++
++/* Compatibility-profile PZ skinning mixes conventional and generic arrays.
++ * GL4ES aliases their storage, including the conventional colour slot (3).
++ * Slots 6/7 are unused by its ARB conventional-array mapping. Do not use
++ * them on the <=8-attribute compressed mapping, where they are texcoords.
++ */
++static int pz_skinattrib_eligible(const char *source, int maxattrib,
++                                int indices_bound, int weights_bound,
++                                int slot6_used, int slot7_used)
++{
++    return source && maxattrib > 8 && !indices_bound && !weights_bound &&
++        !slot6_used && !slot7_used &&
++        strstr(source, "gl_Vertex") && strstr(source, "gl_Normal") &&
++        strstr(source, "MatrixPalette") && strstr(source, "boneIndices") &&
++        strstr(source, "boneWeights");
++}
++
++#endif
