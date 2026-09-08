@@ -1,0 +1,108 @@
+--- a/src/mesa/main/mipmap.c
++++ b/src/mesa/main/mipmap.c
+@@ -36,6 +36,7 @@
+ #include "teximage.h"
+ #include "texobj.h"
+ #include "texstore.h"
++#include "zomdroid_etc2.h"
+ #include "image.h"
+ #include "macros.h"
+ #include "util/half_float.h"
+@@ -927,6 +928,14 @@
+    GLenum temp_base_format;
+    GLubyte **temp_src_slices = NULL, **temp_dst_slices = NULL;
+ 
++   const bool zetc2 = texObj->Target == GL_TEXTURE_2D &&
++      srcImage->zomdroid_etc2 &&
++      (srcImage->TexFormat == MESA_FORMAT_ETC2_RGB8 ||
++       srcImage->TexFormat == MESA_FORMAT_ETC2_RGBA8_EAC);
++   const GLubyte zetc2_mark = srcImage->zomdroid_etc2;
++   const GLenum zetc2_format = srcImage->TexFormat == MESA_FORMAT_ETC2_RGB8
++      ? GL_COMPRESSED_RGB8_ETC2 : GL_COMPRESSED_RGBA8_ETC2_EAC;
++
+    /* only two types of compressed textures at this time */
+    assert(texObj->Target == GL_TEXTURE_2D ||
+           texObj->Target == GL_TEXTURE_2D_ARRAY ||
+@@ -939,6 +948,9 @@
+     * and get base format.
+     */
+    temp_format = _mesa_get_uncompressed_format(srcImage->TexFormat);
++   /* The encoder accepts tight RGBA bytes, not Mesa's possible RGBX layout. */
++   if (zetc2)
++      temp_format = MESA_FORMAT_R8G8B8A8_UNORM;
+ 
+    switch (_mesa_get_format_datatype(srcImage->TexFormat)) {
+    case GL_FLOAT:
+@@ -1046,11 +1058,30 @@
+                                   dstWidth, dstHeight, dstDepth,
+                                   temp_dst_slices, temp_dst_row_stride);
+ 
+-      /* The image space was allocated above so use glTexSubImage now */
+-      st_TexSubImage(ctx, 2, dstImage,
++      if (zetc2) {
++         size_t encoded_size = 0;
++         const void *encoded = zomdroid_etc2_encode(zetc2_format,
++               dstWidth, dstHeight, temp_dst, 4, &encoded_size);
++         if (!encoded) {
++            _mesa_error(ctx, GL_OUT_OF_MEMORY, "Zomdroid ETC2 mipmap encode");
++            goto end;
++         }
++         /* Internal state-tracker calls bypass the TexSubImage API hook.
++          * ETC2 texstore is a stub: upload blocks explicitly instead. */
++         struct gl_pixelstore_attrib save_unpack = ctx->Unpack;
++         ctx->Unpack = ctx->DefaultPacking;
++         st_CompressedTexSubImage(ctx, 2, dstImage, 0, 0, 0,
++               dstWidth, dstHeight, 1, zetc2_format,
++               (GLsizei)encoded_size, encoded);
++         ctx->Unpack = save_unpack;
++         dstImage->zomdroid_etc2 = zetc2_mark;
++      } else {
++         /* The image space was allocated above so use glTexSubImage now */
++         st_TexSubImage(ctx, 2, dstImage,
+                      0, 0, 0, dstWidth, dstHeight, dstDepth,
+                      temp_base_format, temp_datatype,
+                      temp_dst, &ctx->DefaultPacking);
++      }
+ 
+       /* swap src and dest pointers */
+       {
+--- a/src/mesa/main/zomdroid_texetc2.c
++++ b/src/mesa/main/zomdroid_texetc2.c
+@@ -219,7 +219,19 @@
+    /* A compressed TexFormat means Mesa already chose one (DXT5 for the generic request). For
+     * the generic request that choice is ours to override; for anything else it is the
+     * application's business. */
+-   if (_mesa_is_format_compressed(texImage->TexFormat) && !generic_compressed)
++   /* Mesa inherits TexFormat from the preceding mip level before this hook.
++    * An ETC2 format inherited from OUR base image is still our upload, not an
++    * application-owned compressed texture. Rejecting it sends raw mip pixels
++    * into Mesa's unimplemented ETC2 texstore (zoom-out reads unfilled levels).
++    */
++   const struct gl_texture_image *chain_base = texObj->Image[texImage->Face][0];
++   const bool inherited_etc2 = texImage->Level > 0 && chain_base &&
++      chain_base->zomdroid_etc2 != ZETC2_MARK_NONE &&
++      texImage->TexFormat == chain_base->TexFormat &&
++      (texImage->TexFormat == MESA_FORMAT_ETC2_RGB8 ||
++       texImage->TexFormat == MESA_FORMAT_ETC2_RGBA8_EAC);
++   if (_mesa_is_format_compressed(texImage->TexFormat) && !generic_compressed &&
++       !inherited_etc2)
+       return false;
+    /* Legacy automatic mipmap generation would run Mesa's software generator on our
+     * compressed levels, which lands on the same empty texstore. Leave those alone. */
+--- a/src/mesa/state_tracker/st_gen_mipmap.c
++++ b/src/mesa/state_tracker/st_gen_mipmap.c
+@@ -129,6 +129,14 @@
+    if (texObj->Sampler.Attrib.sRGBDecode == GL_SKIP_DECODE_EXT)
+       format = util_format_linear(format);
+ 
++   /* Zomdroid's implicit ETC2 textures require CPU re-encoding of mip levels.
++    * They cannot be render targets and Mesa's ordinary ETC2 texstore is a stub.
++    * Explicit/application-owned compressed textures keep the upstream path. */
++   if (_mesa_base_tex_image(texObj)->zomdroid_etc2) {
++      _mesa_generate_mipmap(ctx, target, texObj);
++      return;
++   }
++
+    /* For fallback formats, we need to update both the compressed and
+     * uncompressed images.
+     */
