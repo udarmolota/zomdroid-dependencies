@@ -2,6 +2,7 @@ package com.zomdroid.agent;
 
 import com.zomdroid.agent.decorators.QuickSave;
 import com.zomdroid.agent.decorators.ShaderUnit;
+import com.zomdroid.agent.decorators.SpinIdle;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
@@ -52,10 +53,26 @@ public class Main {
             new ByteBuddy().with(TypeValidation.DISABLED)
                     .rebase(typePool.describe("zombie.GameWindow").resolve(), locator)
                     .visit(Advice.to(QuickSave.frameStep.class).on(named("frameStep")))
+                    // Same rebase as quick save: GameWindow must not be rebased twice.
+                    .visit(Advice.to(SpinIdle.mainThreadStep.class).on(named("mainThreadStep")))
                     .make()
                     .load(classLoader, ClassReloadingStrategy.of(inst));
+            System.out.println("[spin-idle] game thread armed (" + SpinIdle.IDLE_NANOS + " ns)");
         } catch (Exception e) {
             System.out.println("[quicksave] could not hook GameWindow.frameStep: " + e);
+        }
+
+        // RenderThread spins the same way; see SpinIdle for both loops.
+        try {
+            new ByteBuddy().with(TypeValidation.DISABLED)
+                    .rebase(typePool.describe("zombie.core.SpriteRenderer").resolve(), locator)
+                    .visit(Advice.to(SpinIdle.acquireStateForRendering.class)
+                            .on(named("acquireStateForRendering")))
+                    .make()
+                    .load(classLoader, ClassReloadingStrategy.of(inst));
+            System.out.println("[spin-idle] render thread armed (" + SpinIdle.IDLE_NANOS + " ns)");
+        } catch (Exception e) {
+            System.out.println("[spin-idle] could not hook SpriteRenderer.acquireStateForRendering: " + e);
         }
     }
 }
