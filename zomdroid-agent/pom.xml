@@ -19,6 +19,10 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
+                <!-- Pinned: relocation has to reach the classes under META-INF/versions too (Byte
+                     Buddy's Java 24+ bridge lives only there, see below), which older shade
+                     releases did not do. Unpinned, the version was whatever Maven resolved. -->
+                <version>3.6.0</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -27,6 +31,26 @@
                         </goals>
                         <configuration>
                             <minimizeJar>true</minimizeJar>
+                            <!--
+                              Our copies of Byte Buddy and ANTLR live under our own package names.
+                              The agent is on the system class path through -javaagent, so plain
+                              net.bytebuddy.* classes from this jar shadowed the Byte Buddy every
+                              mod framework brings along. ZombieBuddy ships a newer one; ours (1.17.4)
+                              cannot read Java 25 class files, and PZ3D, compiled for Java 25, lost
+                              every one of its patches with "Unsupported class file major version
+                              69" (2026-09-27). The same collision is why ZBBetterFPS once had to be
+                              rebuilt for Java 21. Relocated, each side uses its own copy.
+                            -->
+                            <relocations>
+                                <relocation>
+                                    <pattern>net.bytebuddy</pattern>
+                                    <shadedPattern>com.zomdroid.shaded.net.bytebuddy</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.antlr</pattern>
+                                    <shadedPattern>com.zomdroid.shaded.org.antlr</shadedPattern>
+                                </relocation>
+                            </relocations>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <manifestEntries>
