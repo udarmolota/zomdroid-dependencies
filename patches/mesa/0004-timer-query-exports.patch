@@ -1,0 +1,33 @@
+From: Zomdroid
+Subject: [PATCH] glapi: export the GL_ARB_timer_query entry points statically
+
+libzfa.so links libglapi_static whole and has no GetProcAddress, so LWJGL resolves every GL
+function by name. A function is a static export only if it is listed in static_data.functions,
+and the three GL_ARB_timer_query functions (core in OpenGL 3.3) are not: glQueryCounter,
+glGetQueryObjecti64v and glGetQueryObjectui64v resolved to NULL, and PZ3D killed the JVM on its
+first glQueryCounter call although the context reports OpenGL 4.6. Offsets are unchanged; only the
+export list grows. They are the only core functions up to OpenGL 3.3 missing from the list.
+
+---
+diff --git a/src/mapi/glapi/gen/static_data.py b/src/mapi/glapi/gen/static_data.py
+--- a/src/mapi/glapi/gen/static_data.py
++++ b/src/mapi/glapi/gen/static_data.py
+@@ -2180,8 +2180,10 @@
+     "GetQueryIndexediv",
+     "GetQueryiv",
+     "GetQueryivARB",
++    "GetQueryObjecti64v",
+     "GetQueryObjectiv",
+     "GetQueryObjectivARB",
++    "GetQueryObjectui64v",
+     "GetQueryObjectuiv",
+     "GetQueryObjectuivARB",
+     "GetRenderbufferParameteriv",
+@@ -2535,6 +2537,7 @@
+     "PushDebugGroup",
+     "PushMatrix",
+     "PushName",
++    "QueryCounter",
+     "RasterPos2d",
+     "RasterPos2dv",
+     "RasterPos2f",
