@@ -49,10 +49,28 @@
                         <configuration>
                             <minimizeJar>true</minimizeJar>
                             <!--
+                              No multi-release copies. Shade relocates the base classes but left
+                              every class under META-INF/versions/9 and /24 at its old name
+                              net.bytebuddy.*: the Java 24+ bridge became unreachable for our
+                              relocated code (the agent would install no hooks on Build 42.20, the
+                              way quick save once shipped as a dead button), and the old names stayed
+                              visible to mods, so the collision with ZombieBuddy was only half gone.
+                              The agent runs Byte Buddy on its plain ASM reader instead (ASM_ONLY,
+                              set in Main), which 1.17.7 can do for Java 25. Multi-Release is off.
+                            -->
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/versions/**</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <!--
                               Our copies of Byte Buddy and ANTLR live under our own package names.
                               The agent is on the system class path through -javaagent, so plain
                               net.bytebuddy.* classes from this jar shadowed the Byte Buddy every
-                              mod framework brings along. ZombieBuddy ships a newer one; ours (1.17.4)
+                              mod framework brings along. ZombieBuddy ships a newer one; ours (then 1.17.4)
                               cannot read Java 25 class files, and PZ3D, compiled for Java 25, lost
                               every one of its patches with "Unsupported class file major version
                               69" (2026-09-27). The same collision is why ZBBetterFPS once had to be
@@ -75,27 +93,6 @@
                                         <Premain-Class>com.zomdroid.agent.Main</Premain-Class>
                                         <Can-Redefine-Classes>true</Can-Redefine-Classes>
                                         <Can-Retransform-Classes>true</Can-Retransform-Classes>
-                                        <!--
-                                          Byte Buddy is a multi-release jar and shade copies its
-                                          META-INF/versions tree into ours - 2946 entries for Java 9+
-                                          and 25 for Java 24+ - but writes a fresh manifest without
-                                          this attribute, and without it the JVM does not look in
-                                          that directory at all. So the whole tree sat in the jar as
-                                          dead weight while we ran Byte Buddy's Java 8 classes on
-                                          Java 25.
-
-                                          On Java 24+ Byte Buddy reads classes through the JDK
-                                          Class-File API rather than its own ASM, and that bridge
-                                          (net.bytebuddy.jar.asmjdkbridge) exists ONLY under
-                                          versions/24. Invisible, it threw "Type not available on
-                                          current VM: JdkClassReader" and no hook was installed -
-                                          which is how quick save shipped as a dead button.
-
-                                          Not optional on Build 42.20: its own classes are major
-                                          version 69, and the bundled ASM tops out at 68, so forcing
-                                          ASM_ONLY instead is not a way out.
-                                        -->
-                                        <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
                                 </transformer>
                             </transformers>
@@ -110,7 +107,10 @@
         <dependency>
             <groupId>net.bytebuddy</groupId>
             <artifactId>byte-buddy</artifactId>
-            <version>1.17.4</version>
+            <!-- 1.17.5+ carries ASM 9.8, which reads Java 25 class files (Build 42.20 is major
+                 version 69) on its own, so the agent no longer needs the Class File API bridge
+                 that lives only under META-INF/versions/24. See the shade filter above. -->
+            <version>1.17.7</version>
         </dependency>
         <dependency>
             <groupId>org.antlr</groupId>

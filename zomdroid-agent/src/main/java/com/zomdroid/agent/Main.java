@@ -15,6 +15,16 @@ import java.lang.instrument.Instrumentation;
 import static net.bytebuddy.matcher.ElementMatchers.named;
 
 public class Main {
+    // First member on purpose: static initialisers run in source order, and the fields below
+    // already touch Byte Buddy. The jar no longer carries the Class File API bridge (see the shade
+    // filter in pom.xml), so Byte Buddy must not pick it on Java 24+; its own ASM 9.8 reads the
+    // Java 25 classes of Build 42.20. On Java 21 (Build 41) this is what Byte Buddy does anyway.
+    // The key is Byte Buddy's own constant, so it follows the relocated package name.
+    static {
+        if (System.getProperty(net.bytebuddy.utility.OpenedClassReader.PROCESSOR_PROPERTY) == null)
+            System.setProperty(net.bytebuddy.utility.OpenedClassReader.PROCESSOR_PROPERTY, "ASM_ONLY");
+    }
+
     private static ClassLoader classLoader = Main.class.getClassLoader();
     private static TypePool typePool = TypePool.Default.of(classLoader);
     private static ClassFileLocator locator = ClassFileLocator.ForClassLoader.of(classLoader);
