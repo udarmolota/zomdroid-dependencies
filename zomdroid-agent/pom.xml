@@ -23,6 +23,23 @@
                      Buddy's Java 24+ bridge lives only there, see below), which older shade
                      releases did not do. Unpinned, the version was whatever Maven resolved. -->
                 <version>3.6.0</version>
+                <!-- Relocating means shade parses every class with ASM, and the ASM it brings
+                     stops below Java 24 - Byte Buddy's versions/24 bridge is major version 68, so
+                     the build failed with "Unsupported class file major version 68". Before the
+                     relocation shade only copied entries and never looked inside. ASM 9.8 reads
+                     up to Java 25. -->
+                <dependencies>
+                    <dependency>
+                        <groupId>org.ow2.asm</groupId>
+                        <artifactId>asm</artifactId>
+                        <version>9.8</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.ow2.asm</groupId>
+                        <artifactId>asm-commons</artifactId>
+                        <version>9.8</version>
+                    </dependency>
+                </dependencies>
                 <executions>
                     <execution>
                         <phase>package</phase>
