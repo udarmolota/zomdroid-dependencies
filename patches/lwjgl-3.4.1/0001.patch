@@ -3,7 +3,7 @@ new file mode 100755
 index 000000000..c7a60be56
 --- /dev/null
 +++ b/CMakeLists.txt
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,66 @@
 +cmake_minimum_required(VERSION 3.28)
 +project(lwjgl)
 +
@@ -57,6 +57,19 @@ index 000000000..c7a60be56
 +)
 +list(FILTER OPENGL_SRC EXCLUDE REGEX ".*org_lwjgl_opengl_WGL\.c$")
 +add_library(lwjgl_opengl SHARED ${OPENGL_SRC})
++
++# stb (STBImage and friends). Build 42.21 reads its window icons through STBImage, so without
++# this module the game dies at startup: UnsatisfiedLinkError, liblwjgl_stb.so (2026-09-29).
++# The generated files carry the STB_*_IMPLEMENTATION defines and include the single-file headers
++# from src/main/c themselves (STBVorbis includes stb_vorbis.c), so only generated/c is compiled.
++# org_lwjgl_stb_LibSTB.c defines the module's own malloc hooks, so nothing links against core.
++file(GLOB STB_SRC
++    ${CMAKE_CURRENT_SOURCE_DIR}/modules/lwjgl/stb/src/generated/c/*.c
++)
++add_library(lwjgl_stb SHARED ${STB_SRC})
++target_include_directories(lwjgl_stb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/modules/lwjgl/stb/src/main/c)
++target_compile_options(lwjgl_stb PRIVATE -O3)
++target_link_libraries(lwjgl_stb m)
 diff --git a/modules/lwjgl/core/src/main/c/linux/liburing/include/liburing/compat.h b/modules/lwjgl/core/src/main/c/linux/liburing/include/liburing/compat.h
 index 44fe4dc9b..7992e1be3 100644
 --- a/modules/lwjgl/core/src/main/c/linux/liburing/include/liburing/compat.h
