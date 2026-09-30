@@ -34,6 +34,11 @@ TARGETS_DIR="$ROOT_DIR/targets/libs/android-$ANDROID_ABI"
 
 MESON_BUILD_TYPE=$(cmake_to_meson_buildtype "$BUILD_TYPE_CMAKE")
 
+# MESA_KEEP_SYMBOLS=1 compiles with debug info (-g on top of the same optimisation level, so the
+# generated code does not change) and keeps the unstripped libraries next to the targets.
+SYMBOLS_DIR="$ROOT_DIR/symbols/mesa/android-$ANDROID_ABI"
+if [ "${MESA_KEEP_SYMBOLS:-0}" = "1" ]; then MESA_DEBUG_INFO=true; else MESA_DEBUG_INFO=false; fi
+
 REPO_NAME="mesa"
 REPO_DIR="$REPOS_DIR/$REPO_NAME"
 PATCH_DIR="$PATCHES_DIR/$REPO_NAME"
@@ -95,11 +100,23 @@ meson setup . "$REPO_DIR" \
   -Dzfa=true \
   -Dgallium-drivers=zink,softpipe \
   -Dshared-glapi=disabled \
-  -Dbuildtype="$MESON_BUILD_TYPE"
+  -Dbuildtype="$MESON_BUILD_TYPE" \
+  -Ddebug="$MESA_DEBUG_INFO"
 
 echo "==> Building mesa..."
 
 meson compile -C .
+
+if [ "$MESA_DEBUG_INFO" = "true" ]; then
+  # The unstripped libraries, for symbolizing thread dumps and crashes from the field. They are
+  # never shipped: the copies below are stripped as before and come out of the same link, so an
+  # address from a shipped library resolves against its twin here.
+  echo "==> Keeping unstripped mesa libraries in $SYMBOLS_DIR..."
+  mkdir -p "$SYMBOLS_DIR"
+  cp -v "src/freedreno/vulkan/libvulkan_freedreno.so" "$SYMBOLS_DIR/"
+  cp -v "src/gallium/targets/osmesa/libOSMesa.so" "$SYMBOLS_DIR/"
+  cp -v "src/gallium/targets/zfa/libzfa.so" "$SYMBOLS_DIR/"
+fi
 
 if [ "$BUILD_TYPE_CMAKE" = "Release" ]; then
   STRIP_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
