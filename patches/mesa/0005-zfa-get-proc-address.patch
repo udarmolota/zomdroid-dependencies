@@ -22,7 +22,7 @@ diff --git a/src/gallium/frontends/zfa/zfa.c b/src/gallium/frontends/zfa/zfa.c
  
  #include <threads.h>
  #include <frontend/api.h>
-@@ -317,6 +318,21 @@
+@@ -317,6 +318,23 @@
     return st_api_make_current(zfa->st, &zfa->current_surface->base, &zfa->current_surface->base);
  }
  
@@ -35,6 +35,8 @@ diff --git a/src/gallium/frontends/zfa/zfa.c b/src/gallium/frontends/zfa/zfa.c
 + * so the rest were NULL although the context implements them (181 functions of OpenGL 4.0+,
 + * glCreateTextures among them). Answer under the OSMesa name, the way libOSMesa does.
 + */
++GLAPI ZFAproc GLAPIENTRY OSMesaGetProcAddress(const char *funcName);
++
 +GLAPI ZFAproc GLAPIENTRY
 +OSMesaGetProcAddress(const char *funcName)
 +{
