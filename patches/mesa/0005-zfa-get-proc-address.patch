@@ -1,0 +1,46 @@
+From: Zomdroid
+Subject: [PATCH] zfa: answer LWJGL's GetProcAddress lookup
+
+libzfa.so had no lookup function, so LWJGL resolved every GL function by name with dlsym and saw
+only the static exports. Mesa implements and dispatches many more: 181 functions of OpenGL 4.0 and
+later were NULL on a context that reports 4.6, and a mod calling glCreateTextures (Project
+Viewpoint) aborted the JVM. libOSMesa.so never had the problem because it exports
+OSMesaGetProcAddress, which is a call to _mesa_glapi_get_proc_address.
+
+Export the same function from libzfa.so under the same name, one of the four LWJGL probes. No
+launcher change is needed. 0004-timer-query-exports.patch becomes redundant but stays harmless.
+
+---
+diff --git a/src/gallium/frontends/zfa/zfa.c b/src/gallium/frontends/zfa/zfa.c
+--- a/src/gallium/frontends/zfa/zfa.c
++++ b/src/gallium/frontends/zfa/zfa.c
+@@ -2,6 +2,7 @@
+ #include <kopper_interface.h>
+ #include <vulkan/vulkan_android.h>
+ #include "GL/zfa.h"
++#include "glapi/glapi.h"
+ 
+ #include <threads.h>
+ #include <frontend/api.h>
+@@ -317,6 +318,21 @@
+    return st_api_make_current(zfa->st, &zfa->current_surface->base, &zfa->current_surface->base);
+ }
+ 
++typedef void (*ZFAproc)(void);
++
++/*
++ * LWJGL asks a GL library for a lookup function under four names: glXGetProcAddress,
++ * glXGetProcAddressARB, eglGetProcAddress and OSMesaGetProcAddress. Without one it resolves
++ * every GL function with dlsym, and only the functions in static_data.functions are exported,
++ * so the rest were NULL although the context implements them (181 functions of OpenGL 4.0+,
++ * glCreateTextures among them). Answer under the OSMesa name, the way libOSMesa does.
++ */
++GLAPI ZFAproc GLAPIENTRY
++OSMesaGetProcAddress(const char *funcName)
++{
++   return (ZFAproc) _mesa_glapi_get_proc_address(funcName);
++}
++
+ GLAPI void GLAPIENTRY
+ zfaFlushFront(void)
+ {
