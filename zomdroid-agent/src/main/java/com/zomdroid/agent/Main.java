@@ -1,5 +1,6 @@
 package com.zomdroid.agent;
 
+import com.zomdroid.agent.decorators.GL33Mask;
 import com.zomdroid.agent.decorators.QuickSave;
 import com.zomdroid.agent.decorators.ShaderUnit;
 import com.zomdroid.agent.decorators.SpinIdle;
@@ -54,6 +55,20 @@ public class Main {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        // ZINK only: GL4ES and NG_GL4ES never report OpenGL 3.3, so the flag is already false there.
+        if (renderer.startsWith("ZINK") && !Boolean.getBoolean("zomdroid.keepGL33")) {
+            try {
+                new ByteBuddy().with(TypeValidation.DISABLED)
+                        .rebase(typePool.describe("org.lwjgl.opengl.GL").resolve(), locator)
+                        .visit(Advice.to(GL33Mask.createCapabilities.class).on(named("createCapabilities")))
+                        .make()
+                        .load(classLoader, ClassReloadingStrategy.of(inst));
+                System.out.println("[gl33-mask] armed");
+            } catch (Exception e) {
+                System.out.println("[gl33-mask] could not hook GL.createCapabilities: " + e);
+            }
         }
 
         // Deliberately outside the renderer check above: quick save has nothing to do with which
