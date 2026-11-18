@@ -4,6 +4,7 @@ import com.zomdroid.agent.decorators.GL33Mask;
 import com.zomdroid.agent.decorators.QuickSave;
 import com.zomdroid.agent.decorators.ShaderUnit;
 import com.zomdroid.agent.decorators.SpinIdle;
+import com.zomdroid.agent.decorators.VboChunk;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
@@ -55,6 +56,23 @@ public class Main {
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+
+        // Build 42's streaming VBORenderer flushes every 4 KB (two glBufferData each); a bigger
+        // chunk sends the same bytes in far fewer calls. Opt-in with ZOMDROID_VBO_KB; nothing is
+        // touched while it is off, and Build 41, which has no VBORenderer, only logs a line.
+        if (VboChunk.enabled()) {
+            try {
+                new ByteBuddy().with(TypeValidation.DISABLED)
+                        .rebase(typePool.describe("zombie.core.opengl.VBORenderer").resolve(), locator)
+                        .visit(Advice.to(VboChunk.create.class).on(named("create")))
+                        .visit(Advice.to(VboChunk.setFormat.class).on(named("setFormat")))
+                        .make()
+                        .load(classLoader, ClassReloadingStrategy.of(inst));
+                System.out.println("[vbo-chunk] VBORenderer chunk " + VboChunk.KB + " KB");
+            } catch (Throwable t) {
+                System.out.println("[vbo-chunk] not applied: " + t);
+            }
         }
 
         // ZINK only: GL4ES and NG_GL4ES never report OpenGL 3.3, so the flag is already false there.
