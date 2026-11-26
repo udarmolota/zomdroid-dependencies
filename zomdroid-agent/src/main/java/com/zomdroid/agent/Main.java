@@ -1,6 +1,7 @@
 package com.zomdroid.agent;
 
 import com.zomdroid.agent.decorators.GL33Mask;
+import com.zomdroid.agent.decorators.MapFbo;
 import com.zomdroid.agent.decorators.QuickSave;
 import com.zomdroid.agent.decorators.ShaderUnit;
 import com.zomdroid.agent.decorators.SpinIdle;
@@ -8,6 +9,7 @@ import com.zomdroid.agent.decorators.VboChunk;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.asm.Advice;
 import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.dynamic.DynamicType;
 import net.bytebuddy.dynamic.loading.ClassReloadingStrategy;
 import net.bytebuddy.dynamic.scaffold.TypeValidation;
 import net.bytebuddy.pool.TypePool;
@@ -15,6 +17,7 @@ import net.bytebuddy.pool.TypePool;
 import java.lang.instrument.Instrumentation;
 
 import static net.bytebuddy.matcher.ElementMatchers.named;
+import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
 
 public class Main {
     // First member on purpose: static initialisers run in source order, and the fields below
@@ -75,6 +78,23 @@ public class Main {
             }
         }
 
+        // World map picture cache, opt-in with ZOMDROID_MAPFBO=1; see MapFbo. Build 41 has its own,
+        // different zombie.worldMap, so the hook is matched on the exact zero-argument methods and
+        // MapFbo resolves every member it needs before the first use, turning itself off otherwise.
+        if (MapFbo.ENABLED) {
+            try {
+                new ByteBuddy().with(TypeValidation.DISABLED)
+                        .rebase(typePool.describe("zombie.worldMap.WorldMapRenderer$Drawer").resolve(), locator)
+                        .visit(Advice.to(MapFbo.renderInternal.class).on(named("renderInternal").and(takesArguments(0))))
+                        .visit(Advice.to(MapFbo.renderPlayers.class).on(named("renderPlayers").and(takesArguments(0))))
+                        .make()
+                        .load(classLoader, ClassReloadingStrategy.of(inst));
+                System.out.println("[map-fbo] armed");
+            } catch (Throwable t) {
+                System.out.println("[map-fbo] not applied: " + t);
+            }
+        }
+
         // ZINK only: GL4ES and NG_GL4ES never report OpenGL 3.3, so the flag is already false there.
         if (renderer.startsWith("ZINK") && !Boolean.getBoolean("zomdroid.keepGL33")) {
             try {
@@ -107,11 +127,15 @@ public class Main {
 
         // RenderThread spins the same way; see SpinIdle for both loops.
         try {
-            new ByteBuddy().with(TypeValidation.DISABLED)
+            DynamicType.Builder<?> spriteRenderer = new ByteBuddy().with(TypeValidation.DISABLED)
                     .rebase(typePool.describe("zombie.core.SpriteRenderer").resolve(), locator)
                     .visit(Advice.to(SpinIdle.acquireStateForRendering.class)
-                            .on(named("acquireStateForRendering")))
-                    .make()
+                            .on(named("acquireStateForRendering")));
+            // Same rebase: SpriteRenderer must not be rebased twice. Frees the map picture once
+            // no map has drawn for a few seconds.
+            if (MapFbo.ENABLED)
+                spriteRenderer = spriteRenderer.visit(Advice.to(MapFbo.tick.class).on(named("acquireStateForRendering")));
+            spriteRenderer.make()
                     .load(classLoader, ClassReloadingStrategy.of(inst));
             System.out.println("[spin-idle] render thread armed (" + SpinIdle.IDLE_NANOS + " ns)");
         } catch (Exception e) {
