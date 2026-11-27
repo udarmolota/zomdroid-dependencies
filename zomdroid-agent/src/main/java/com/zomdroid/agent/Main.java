@@ -127,6 +127,12 @@ public class Main {
 
         // RenderThread spins the same way; see SpinIdle for both loops.
         try {
+            // Load the class the ordinary way first. A class the JVM has not loaded yet is
+            // injected by ClassReloadingStrategy with no code source, and Build 42.22 signs its
+            // jar: when the launcher lets zombie.core load from that jar (see CoreFromGameJar),
+            // one unsigned class in the package ends the game with "signer information does
+            // not match". Loaded first, it is redefined in place and keeps the jar's signers.
+            Class.forName("zombie.core.SpriteRenderer", false, classLoader);
             DynamicType.Builder<?> spriteRenderer = new ByteBuddy().with(TypeValidation.DISABLED)
                     .rebase(typePool.describe("zombie.core.SpriteRenderer").resolve(), locator)
                     .visit(Advice.to(SpinIdle.acquireStateForRendering.class)
